@@ -1,3 +1,4 @@
+#include "clang/Basic/LLVM.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
@@ -390,7 +391,8 @@ void IRQChecker::RequestIRQ(const CallExpr * call, CheckerContext &context, bool
 	context.addTransition(stateNotFail);
 	context.addTransition(stateFail);
 
-	fprintf(stderr, "[IRQChecker] ADD: ");
+	llvm::errs() << "[IRQChecker] ADD: " << irqVal;
+	irqVal.dumpToStream(llvm::errs());
 	irqVal.dump();
 	fprintf(stderr, "| ");
 	devIdVal.dump();

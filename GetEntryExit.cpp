@@ -343,16 +343,16 @@ void GetEntryExit::checkEndAnalysis(ExplodedGraph &unused, BugReporter &unused2,
 
 	size_t cpos = mainFileName.rfind(".c");
 	if (cpos == std::string::npos) {
-		fprintf(stderr, "[GetEntryExit] Not .c file: %s\n", mainFileName.str().c_str());
+		llvm::errs() << "[GetEntryExit] Not .c file: " << mainFileName << "\n";
 	}
 	SmallString<128> fileName = mainFileName.substr(0, cpos);
 	fileName.append(".entry");
 	SmallString<128> prefix = mainFileName.substr(0, cpos);
 	prefix.append("/");
-	std::string err;
-	llvm::raw_fd_ostream output(fileName.c_str(), err, llvm::sys::fs::F_Text);
-	if (!err.empty()) {
-		fprintf(stderr, "[GetEntryExit] failed to open file: %s\n\t:%s\n", fileName.c_str(), err.c_str());
+	std::error_code err;
+	llvm::raw_fd_ostream output(fileName, err, llvm::sys::fs::F_Text);
+	if (!err.message().empty()) {
+		llvm::errs() << "[GetEntryExit] failed to open file: " << fileName << "\n\t:" << err.message() << "\n";
 		return;
 	}
 
