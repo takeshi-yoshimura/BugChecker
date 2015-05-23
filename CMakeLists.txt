@@ -1,4 +1,4 @@
-﻿project(BugChecker CXX)
+project(BugChecker CXX)
 
 cmake_minimum_required(VERSION 2.4)
 set(CMAKE_C_FLAGS_RELEASE "-Wall -O2 -Wno-strict-aliasing -std=c++11")
@@ -8,6 +8,8 @@ execute_process(COMMAND llvm-config --includedir OUTPUT_VARIABLE default_include
 execute_process(COMMAND llvm-config --libdir OUTPUT_VARIABLE default_libdir)
 string(STRIP ${default_includedir} default_includedir)
 string(STRIP ${default_libdir} default_libdir)
+message(STATUS "include: ${default_includedir}")
+message(STATUS "link: ${default_libdir}")
 
 include_directories(${default_includedir})
 link_directories(${default_libdir})
