@@ -1,8 +1,6 @@
 project(BugChecker CXX)
 
 cmake_minimum_required(VERSION 2.4)
-set(CMAKE_C_FLAGS_RELEASE "-Wall -O2 -Wno-strict-aliasing -std=c++11")
-set(CMAKE_C_FLAGS_DEBUG "-g")
 
 execute_process(COMMAND llvm-config --includedir OUTPUT_VARIABLE default_includedir)
 execute_process(COMMAND llvm-config --libdir OUTPUT_VARIABLE default_libdir)
@@ -16,8 +14,11 @@ link_directories(${default_libdir})
 
 add_library(BugChecker STATIC BugChecker.cpp GetEntryExit.cpp IRQChecker.cpp)
 
-target_link_libraries(BugChecker ${default_libdir} clangAnalysis clangAST clangStaticAnalyzerCore LLVMSupport)
-
+if ( MSVC )
+  target_link_libraries(BugChecker ${default_libdir} clangAnalysis clangAST clangStaticAnalyzerCore LLVMSupport)
+elseif ( CMAKE_COMPILER_IS_GNUCXX )
+  set(CMAKE_CXX_FLAGS_RELEASE "-Wall -O2 -Wno-strict-aliasing -std=c++11")
+endif()
 
 # for suppressing MS compiler warnings
 # from llvm/cmake/modules/HandleLLVMOptions.cmake
