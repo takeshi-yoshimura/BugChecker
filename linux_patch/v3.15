@@ -1,0 +1,16 @@
+--- linux/Makefile	2014-08-23 02:11:40.267128443 -0400
++++ test/Makefile	2014-08-23 02:11:12.644130101 -0400
+@@ -396,10 +396,11 @@
+ 		   -fno-strict-aliasing -fno-common \
+ 		   -Werror-implicit-function-declaration \
+ 		   -Wno-format-security \
+-		   $(call cc-option,-fno-delete-null-pointer-checks,)
++		   $(call cc-option,-fno-delete-null-pointer-checks,)\
++		   $(call cc-option,-no-integrated-as,)
+ KBUILD_AFLAGS_KERNEL :=
+ KBUILD_CFLAGS_KERNEL :=
+-KBUILD_AFLAGS   := -D__ASSEMBLY__
++KBUILD_AFLAGS   := -D__ASSEMBLY__ $(call cc-option,-no-integrated-as,)
+ KBUILD_AFLAGS_MODULE  := -DMODULE
+ KBUILD_CFLAGS_MODULE  := -DMODULE
+ KBUILD_LDFLAGS_MODULE := -T $(srctree)/scripts/module-common.lds

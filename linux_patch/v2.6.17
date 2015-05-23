@@ -1,0 +1,35 @@
+--- linux.old/arch/x86_64/Makefile	2014-05-31 20:01:01.079806903 +0900
++++ linux/arch/x86_64/Makefile	2014-05-31 20:01:41.636714612 +0900
+@@ -43,7 +43,7 @@
+ cflags-kernel-$(CONFIG_REORDER) += -ffunction-sections
+ # this makes reading assembly source easier, but produces worse code
+ # actually it makes the kernel smaller too.
+-cflags-y += -fno-reorder-blocks
++cflags-y += $(call cc-option,-fno-reorder-blocks)
+ cflags-y += -Wno-sign-compare
+ cflags-y += -fno-asynchronous-unwind-tables
+ ifneq ($(CONFIG_DEBUG_INFO),y)
+--- linux.old/scripts/mod/sumversion.c	2014-05-31 20:14:24.868825036 +0900
++++ linux/scripts/mod/sumversion.c	2014-05-31 20:14:45.657290296 +0900
+@@ -8,6 +8,7 @@
+ #include <errno.h>
+ #include <string.h>
+ #include "modpost.h"
++#include <limits.h>
+ 
+ /*
+  * Stolen form Cryptographic API.
+--- linux.old/Makefile	2014-05-31 20:23:21.338853023 +0900
++++ linux/Makefile	2014-05-31 20:23:10.312605762 +0900
+@@ -306,8 +306,9 @@
+ CPPFLAGS        := -D__KERNEL__ $(LINUXINCLUDE)
+ 
+ CFLAGS 		:= -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
+-	  	   -fno-strict-aliasing -fno-common
+-AFLAGS		:= -D__ASSEMBLY__
++	  	   -fno-strict-aliasing -fno-common \
++		   $(call cc-option,-no-integrated-as,)
++AFLAGS		:= -D__ASSEMBLY__ $(call cc-option,-no-integrated-as,)
+ 
+ # Read KERNELRELEASE from .kernelrelease (if it exists)
+ KERNELRELEASE = $(shell cat .kernelrelease 2> /dev/null)

@@ -1,0 +1,14 @@
+#!/bin/sh
+
+if [ $# -lt 2 ]; then
+  Help="`clang -cc1 -analyzer-checker-help`"
+  echo -e "usage: ${0} {checker-name} {test.c}\n\nclang help:\n${Help}" | less
+  exit 1
+fi
+
+clang -cc1 -c-isystem /usr/local/include/ \
+      -c-isystem /usr/include/ \
+      -c-isystem /usr/lib/gcc/x86_64-redhat-linux/4.8.2/include/ \
+      -load ~/llvm/Release/lib/BugChecker.so \
+      -analyze -analyzer-checker=${@}
+

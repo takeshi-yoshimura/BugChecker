@@ -1,0 +1,269 @@
+--- linux.old/arch/x86/Makefile	2014-05-28 22:57:32.195989771 +0900
++++ linux/arch/x86/Makefile	2014-05-28 22:57:50.187392440 +0900
+@@ -69,7 +69,7 @@
+ 
+         # this works around some issues with generating unwind tables in older gccs
+         # newer gccs do it by default
+-        KBUILD_CFLAGS += -maccumulate-outgoing-args
++        KBUILD_CFLAGS += $(call cc-option,-maccumulate-outgoing-args)
+ endif
+ 
+ ifdef CONFIG_CC_STACKPROTECTOR
+--- linux.old/Makefile	2014-05-29 01:05:02.047245473 +0900
++++ linux/Makefile	2014-05-29 01:05:14.431518822 +0900
+@@ -368,10 +368,11 @@
+ 		   -fno-strict-aliasing -fno-common \
+ 		   -Werror-implicit-function-declaration \
+ 		   -Wno-format-security \
+-		   -fno-delete-null-pointer-checks
++		   $(call cc-option,-fno-delete-null-pointer-checks,) \
++		   $(call cc-option,-no-integrated-as,)
+ KBUILD_AFLAGS_KERNEL :=
+ KBUILD_CFLAGS_KERNEL :=
+-KBUILD_AFLAGS   := -D__ASSEMBLY__
++KBUILD_AFLAGS   := -D__ASSEMBLY__ $(call cc-option,-no-integrated-as,)
+ KBUILD_AFLAGS_MODULE  := -DMODULE
+ KBUILD_CFLAGS_MODULE  := -DMODULE
+ KBUILD_LDFLAGS_MODULE := -T $(srctree)/scripts/module-common.lds
+@@ -577,7 +578,7 @@
+ 
+ # This warning generated too much noise in a regular build.
+ # Use make W=1 to enable this warning (see scripts/Makefile.build)
+-KBUILD_CFLAGS += $(call cc-disable-warning, unused-but-set-variable)
++#KBUILD_CFLAGS += $(call cc-disable-warning, unused-but-set-variable)
+ 
+ ifdef CONFIG_FRAME_POINTER
+ KBUILD_CFLAGS	+= -fno-omit-frame-pointer -fno-optimize-sibling-calls
+--- linux.old/arch/x86/include/asm/bitops.h	2014-05-29 01:13:19.000315508 +0900
++++ linux/arch/x86/include/asm/bitops.h	2014-05-29 01:22:20.790383331 +0900
+@@ -14,6 +14,15 @@
+ 
+ #include <linux/compiler.h>
+ #include <asm/alternative.h>
++#include <asm/rmwcc.h>
++
++#if BITS_PER_LONG == 32
++# define _BITOPS_LONG_SHIFT 5
++#elif BITS_PER_LONG == 64
++# define _BITOPS_LONG_SHIFT 6
++#else
++# error "Unexpected BITS_PER_LONG"
++#endif
+ 
+ #define BIT_64(n)			(U64_C(1) << (n))
+ 
+@@ -59,7 +68,7 @@
+  * restricted to acting on a single-word quantity.
+  */
+ static __always_inline void
+-set_bit(unsigned int nr, volatile unsigned long *addr)
++set_bit(long nr, volatile unsigned long *addr)
+ {
+ 	if (IS_IMMEDIATE(nr)) {
+ 		asm volatile(LOCK_PREFIX "orb %1,%0"
+@@ -67,7 +76,7 @@
+ 			: "iq" ((u8)CONST_MASK(nr))
+ 			: "memory");
+ 	} else {
+-		asm volatile(LOCK_PREFIX "bts %1,%0"
++		asm volatile(LOCK_PREFIX "btsl %1,%0"
+ 			: BITOP_ADDR(addr) : "Ir" (nr) : "memory");
+ 	}
+ }
+@@ -81,9 +90,9 @@
+  * If it's called on the same region of memory simultaneously, the effect
+  * may be that only one operation succeeds.
+  */
+-static inline void __set_bit(int nr, volatile unsigned long *addr)
++static inline void __set_bit(long nr, volatile unsigned long *addr)
+ {
+-	asm volatile("bts %1,%0" : ADDR : "Ir" (nr) : "memory");
++	asm volatile("btsl %1,%0" : ADDR : "Ir" (nr) : "memory");
+ }
+ 
+ /**
+@@ -97,14 +106,14 @@
+  * in order to ensure changes are visible on other processors.
+  */
+ static __always_inline void
+-clear_bit(int nr, volatile unsigned long *addr)
++clear_bit(long nr, volatile unsigned long *addr)
+ {
+ 	if (IS_IMMEDIATE(nr)) {
+ 		asm volatile(LOCK_PREFIX "andb %1,%0"
+ 			: CONST_MASK_ADDR(nr, addr)
+ 			: "iq" ((u8)~CONST_MASK(nr)));
+ 	} else {
+-		asm volatile(LOCK_PREFIX "btr %1,%0"
++		asm volatile(LOCK_PREFIX "btrl %1,%0"
+ 			: BITOP_ADDR(addr)
+ 			: "Ir" (nr));
+ 	}
+@@ -118,15 +127,15 @@
+  * clear_bit() is atomic and implies release semantics before the memory
+  * operation. It can be used for an unlock.
+  */
+-static inline void clear_bit_unlock(unsigned nr, volatile unsigned long *addr)
++static inline void clear_bit_unlock(long nr, volatile unsigned long *addr)
+ {
+ 	barrier();
+ 	clear_bit(nr, addr);
+ }
+ 
+-static inline void __clear_bit(int nr, volatile unsigned long *addr)
++static inline void __clear_bit(long nr, volatile unsigned long *addr)
+ {
+-	asm volatile("btr %1,%0" : ADDR : "Ir" (nr));
++	asm volatile("btrl %1,%0" : ADDR : "Ir" (nr));
+ }
+ 
+ /*
+@@ -141,7 +150,7 @@
+  * No memory barrier is required here, because x86 cannot reorder stores past
+  * older loads. Same principle as spin_unlock.
+  */
+-static inline void __clear_bit_unlock(unsigned nr, volatile unsigned long *addr)
++static inline void __clear_bit_unlock(long nr, volatile unsigned long *addr)
+ {
+ 	barrier();
+ 	__clear_bit(nr, addr);
+@@ -159,7 +168,7 @@
+  * If it's called on the same region of memory simultaneously, the effect
+  * may be that only one operation succeeds.
+  */
+-static inline void __change_bit(int nr, volatile unsigned long *addr)
++static inline void __change_bit(long nr, volatile unsigned long *addr)
+ {
+ 	asm volatile("btc %1,%0" : ADDR : "Ir" (nr));
+ }
+@@ -173,7 +182,7 @@
+  * Note that @nr may be almost arbitrarily large; this function is not
+  * restricted to acting on a single-word quantity.
+  */
+-static inline void change_bit(int nr, volatile unsigned long *addr)
++static inline void change_bit(long nr, volatile unsigned long *addr)
+ {
+ 	if (IS_IMMEDIATE(nr)) {
+ 		asm volatile(LOCK_PREFIX "xorb %1,%0"
+@@ -194,14 +203,9 @@
+  * This operation is atomic and cannot be reordered.
+  * It also implies a memory barrier.
+  */
+-static inline int test_and_set_bit(int nr, volatile unsigned long *addr)
++static inline int test_and_set_bit(long nr, volatile unsigned long *addr)
+ {
+-	int oldbit;
+-
+-	asm volatile(LOCK_PREFIX "bts %2,%1\n\t"
+-		     "sbb %0,%0" : "=r" (oldbit), ADDR : "Ir" (nr) : "memory");
+-
+-	return oldbit;
++	GEN_BINARY_RMWcc(LOCK_PREFIX "bts", *addr, "Ir", nr, "%0", "c");
+ }
+ 
+ /**
+@@ -212,7 +216,7 @@
+  * This is the same as test_and_set_bit on x86.
+  */
+ static __always_inline int
+-test_and_set_bit_lock(int nr, volatile unsigned long *addr)
++test_and_set_bit_lock(long nr, volatile unsigned long *addr)
+ {
+ 	return test_and_set_bit(nr, addr);
+ }
+@@ -226,11 +230,11 @@
+  * If two examples of this operation race, one can appear to succeed
+  * but actually fail.  You must protect multiple accesses with a lock.
+  */
+-static inline int __test_and_set_bit(int nr, volatile unsigned long *addr)
++static inline int __test_and_set_bit(long nr, volatile unsigned long *addr)
+ {
+ 	int oldbit;
+ 
+-	asm("bts %2,%1\n\t"
++	asm("btsl %2,%1\n\t"
+ 	    "sbb %0,%0"
+ 	    : "=r" (oldbit), ADDR
+ 	    : "Ir" (nr));
+@@ -245,15 +249,9 @@
+  * This operation is atomic and cannot be reordered.
+  * It also implies a memory barrier.
+  */
+-static inline int test_and_clear_bit(int nr, volatile unsigned long *addr)
++static inline int test_and_clear_bit(long nr, volatile unsigned long *addr)
+ {
+-	int oldbit;
+-
+-	asm volatile(LOCK_PREFIX "btr %2,%1\n\t"
+-		     "sbb %0,%0"
+-		     : "=r" (oldbit), ADDR : "Ir" (nr) : "memory");
+-
+-	return oldbit;
++	GEN_BINARY_RMWcc(LOCK_PREFIX "btr", *addr, "Ir", nr, "%0", "c");
+ }
+ 
+ /**
+@@ -272,11 +270,11 @@
+  * accessed from a hypervisor on the same CPU if running in a VM: don't change
+  * this without also updating arch/x86/kernel/kvm.c
+  */
+-static inline int __test_and_clear_bit(int nr, volatile unsigned long *addr)
++static inline int __test_and_clear_bit(long nr, volatile unsigned long *addr)
+ {
+ 	int oldbit;
+ 
+-	asm volatile("btr %2,%1\n\t"
++	asm volatile("btrl %2,%1\n\t"
+ 		     "sbb %0,%0"
+ 		     : "=r" (oldbit), ADDR
+ 		     : "Ir" (nr));
+@@ -284,11 +282,11 @@
+ }
+ 
+ /* WARNING: non atomic and it can be reordered! */
+-static inline int __test_and_change_bit(int nr, volatile unsigned long *addr)
++static inline int __test_and_change_bit(long nr, volatile unsigned long *addr)
+ {
+ 	int oldbit;
+ 
+-	asm volatile("btc %2,%1\n\t"
++	asm volatile("btcl %2,%1\n\t"
+ 		     "sbb %0,%0"
+ 		     : "=r" (oldbit), ADDR
+ 		     : "Ir" (nr) : "memory");
+@@ -304,28 +302,22 @@
+  * This operation is atomic and cannot be reordered.
+  * It also implies a memory barrier.
+  */
+-static inline int test_and_change_bit(int nr, volatile unsigned long *addr)
++static inline int test_and_change_bit(long nr, volatile unsigned long *addr)
+ {
+-	int oldbit;
+-
+-	asm volatile(LOCK_PREFIX "btc %2,%1\n\t"
+-		     "sbb %0,%0"
+-		     : "=r" (oldbit), ADDR : "Ir" (nr) : "memory");
+-
+-	return oldbit;
++	GEN_BINARY_RMWcc(LOCK_PREFIX "btc", *addr, "Ir", nr, "%0", "c");
+ }
+ 
+-static __always_inline int constant_test_bit(unsigned int nr, const volatile unsigned long *addr)
++static __always_inline int constant_test_bit(long nr, const volatile unsigned long *addr)
+ {
+-	return ((1UL << (nr % BITS_PER_LONG)) &
+-		(addr[nr / BITS_PER_LONG])) != 0;
++	return ((1UL << (nr & (BITS_PER_LONG-1))) &
++		(addr[nr >> _BITOPS_LONG_SHIFT])) != 0;
+ }
+ 
+-static inline int variable_test_bit(int nr, volatile const unsigned long *addr)
++static inline int variable_test_bit(long nr, volatile const unsigned long *addr)
+ {
+ 	int oldbit;
+ 
+-	asm volatile("bt %2,%1\n\t"
++	asm volatile("btl %2,%1\n\t"
+ 		     "sbb %0,%0"
+ 		     : "=r" (oldbit)
+ 		     : "m" (*(unsigned long *)addr), "Ir" (nr));

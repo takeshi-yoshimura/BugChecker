@@ -1,0 +1,14 @@
+#!/bin/sh
+
+if [ $# -ne 2 ]; then
+    echo "usage: $${0} (branch) (linux dir)"
+    exit 1
+fi
+
+CUR=`pwd`
+cd ${2}
+ver=`git describe ${1} | cut -d - -f1`
+git checkout ${1}
+patch -p 1 < ${CUR}/${ver}
+cd ${CUR}
+

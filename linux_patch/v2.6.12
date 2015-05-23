@@ -1,0 +1,35 @@
+--- linux.old/scripts/mod/sumversion.c	2014-05-31 20:14:24.868825036 +0900
++++ linux/scripts/mod/sumversion.c	2014-05-31 20:14:45.657290296 +0900
+@@ -8,6 +8,7 @@
+ #include <errno.h>
+ #include <string.h>
+ #include "modpost.h"
++#include <limits.h>
+ 
+ /*
+  * Stolen form Cryptographic API.
+--- linux.old/arch/x86_64/Makefile	2014-05-31 20:26:49.105511283 +0900
++++ linux/arch/x86_64/Makefile	2014-05-31 20:26:34.250178231 +0900
+@@ -37,7 +37,7 @@
+ CFLAGS += -pipe
+ # this makes reading assembly source easier, but produces worse code
+ # actually it makes the kernel smaller too.
+-CFLAGS += -fno-reorder-blocks	
++CFLAGS += $(call cc-option,-fno-reorder-blocks)
+ CFLAGS += -Wno-sign-compare
+ ifneq ($(CONFIG_UNWIND_INFO),y)
+ CFLAGS += -fno-asynchronous-unwind-tables
+--- linux.old/Makefile	2014-05-31 20:26:00.449419691 +0900
++++ linux/Makefile	2014-05-31 20:25:51.847227556 +0900
+@@ -339,8 +339,9 @@
+ 
+ CFLAGS 		:= -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
+ 	  	   -fno-strict-aliasing -fno-common \
+-		   -ffreestanding
+-AFLAGS		:= -D__ASSEMBLY__
++		   -ffreestanding \
++		   $(call cc-option,-no-integrated-as,)
++AFLAGS		:= -D__ASSEMBLY__ $(call cc-option,-no-integrated-as,)
+ 
+ # Read KERNELRELEASE from .kernelrelease (if it exists)
+ KERNELRELEASE = $(shell cat .kernelrelease 2> /dev/null)

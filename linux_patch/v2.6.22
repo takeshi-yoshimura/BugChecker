@@ -1,0 +1,25 @@
+--- linux.old/Makefile	2014-05-31 19:45:09.769492494 +0900
++++ linux/Makefile	2014-05-31 19:44:23.113447833 +0900
+@@ -313,8 +313,9 @@
+ CPPFLAGS        := -D__KERNEL__ $(LINUXINCLUDE)
+ 
+ CFLAGS          := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
+-                   -fno-strict-aliasing -fno-common
+-AFLAGS          := -D__ASSEMBLY__
++                   -fno-strict-aliasing -fno-common \
++				   $(call cc-option,-no-integrated-as,)
++AFLAGS          := -D__ASSEMBLY__ $(call cc-option,-no-integrated-as,)
+ 
+ # Read KERNELRELEASE from include/config/kernel.release (if it exists)
+ KERNELRELEASE = $(shell cat include/config/kernel.release 2> /dev/null)
+--- linux.old/arch/x86_64/Makefile	2014-05-31 19:45:11.930540968 +0900
++++ linux/arch/x86_64/Makefile	2014-05-31 19:43:39.078461869 +0900
+@@ -54,7 +54,7 @@
+ cflags-y += $(call cc-option,-mno-sse -mno-mmx -mno-sse2 -mno-3dnow,)
+ # this works around some issues with generating unwind tables in older gccs
+ # newer gccs do it by default
+-cflags-y += -maccumulate-outgoing-args
++cflags-y += $(call cc-option,-maccumulate-outgoing-args)
+ 
+ # do binutils support CFI?
+ cflags-y += $(call as-instr,.cfi_startproc\n.cfi_endproc,-DCONFIG_AS_CFI=1,)

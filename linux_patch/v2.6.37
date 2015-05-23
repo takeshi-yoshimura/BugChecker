@@ -1,0 +1,27 @@
+--- linux.old/Makefile	2014-05-29 00:40:49.811543611 +0900
++++ linux/Makefile	2014-05-29 00:41:23.192288380 +0900
+@@ -351,10 +351,11 @@
+ 		   -fno-strict-aliasing -fno-common \
+ 		   -Werror-implicit-function-declaration \
+ 		   -Wno-format-security \
+-		   -fno-delete-null-pointer-checks
++		   $(call cc-option,-fno-delete-null-pointer-checks,) \
++		   $(call cc-option,-no-integrated-as,)
+ KBUILD_AFLAGS_KERNEL :=
+ KBUILD_CFLAGS_KERNEL :=
+-KBUILD_AFLAGS   := -D__ASSEMBLY__
++KBUILD_AFLAGS   := -D__ASSEMBLY__ $(call cc-option,-no-integrated-as,)
+ KBUILD_AFLAGS_MODULE  := -DMODULE
+ KBUILD_CFLAGS_MODULE  := -DMODULE
+ KBUILD_LDFLAGS_MODULE := -T $(srctree)/scripts/module-common.lds
+--- linux.old/arch/x86/Makefile	2014-05-29 00:43:08.040627761 +0900
++++ linux/arch/x86/Makefile	2014-05-29 00:43:13.786755846 +0900
+@@ -69,7 +69,7 @@
+ 
+         # this works around some issues with generating unwind tables in older gccs
+         # newer gccs do it by default
+-        KBUILD_CFLAGS += -maccumulate-outgoing-args
++        KBUILD_CFLAGS += $(call cc-option,-maccumulate-outgoing-args)
+ endif
+ 
+ ifdef CONFIG_CC_STACKPROTECTOR
