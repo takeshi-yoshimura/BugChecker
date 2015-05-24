@@ -1,4 +1,3 @@
-#include "clang/Basic/LLVM.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
