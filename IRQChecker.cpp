@@ -390,14 +390,9 @@ void IRQChecker::RequestIRQ(const CallExpr * call, CheckerContext &context, bool
 	context.addTransition(stateNotFail);
 	context.addTransition(stateFail);
 
-	llvm::errs() << "[IRQChecker] ADD: " << irqVal;
-	irqVal.dumpToStream(llvm::errs());
-	irqVal.dump();
-	fprintf(stderr, "| ");
-	devIdVal.dump();
-	fprintf(stderr, " (");
+	llvm::errs() << "[IRQChecker] ADD: " << irqVal << "| " << devIdVal << " (";
 	call->getSourceRange().getBegin().dump(context.getSourceManager());
-	fprintf(stderr, ")\n");
+	llvm::errs() << ")\n";
 }
 
 void IRQChecker::FreeIRQ(const CallExpr * call, CheckerContext &context) const {
@@ -409,13 +404,9 @@ void IRQChecker::FreeIRQ(const CallExpr * call, CheckerContext &context) const {
 	SVal irqVal = state->getSVal(call->getArg(0), loc);
 	SVal devIdVal = state->getSVal(call->getArg(1), loc);
 
-	fprintf(stderr, "[IRQChecker] DEL: ");
-	irqVal.dump();
-	fprintf(stderr, "| ");
-	devIdVal.dump();
-	fprintf(stderr, " (");
+	llvm::errs() << "[IRQChecker] DEL: " << irqVal << "| " << devIdVal << " (";
 	call->getSourceRange().getBegin().dump(context.getSourceManager());
-	fprintf(stderr, ")\n");
+	llvm::errs() << ")\n";
 
 	for (const IRQState &prevIrqState : state->get<IrqStateSet>()) {
 		if (prevIrqState.isSameIrq(irqVal) && prevIrqState.isSameDevId(devIdVal)) {
@@ -479,11 +470,9 @@ void IRQChecker::checkPreCall(const CallEvent &call, CheckerContext &context) co
 			if ((irqState.isRequested()) &&
 				(irqState.isIrqInRegionOf(mem) || irqState.isDevIdInRegionOf(mem) ||
 				(irqState.isSameIrq(sym) || irqState.isSameDevId(sym)))) {
-				fprintf(stderr, "[IRQChecker] ESCAPE: ");
-				sym->dump();
-				fprintf(stderr, " (");
+				llvm::errs() << "[IRQChecker] ESCAPE: " << arg << " (";
 				call.getOriginExpr()->getSourceRange().getBegin().dump(context.getSourceManager());
-				fprintf(stderr, ")\n");
+				llvm::errs() << ")\n";
 				remove.insert(irqState);
 				add.insert(IRQState::getEscaped(irqState));
 			}
