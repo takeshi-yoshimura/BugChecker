@@ -351,7 +351,7 @@ void GetEntryExit::checkEndAnalysis(ExplodedGraph &unused, BugReporter &unused2,
 	prefix.append("/");
 	std::error_code err;
 	llvm::raw_fd_ostream output(fileName, err, llvm::sys::fs::F_Text);
-	if (!err.message().empty()) {
+	if (output.has_error()) {
 		llvm::errs() << "[GetEntryExit] failed to open file: " << fileName << "\n\t:" << err.message() << "\n";
 		return;
 	}
