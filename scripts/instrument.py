@@ -71,10 +71,25 @@ def printStructFunc(callbacks, opsForFile, prefix):
         outStr += "}\n"
     return outStr
 
+
+
+
+if len(sys.argv) != 4:
+    print "specify (linux dir) (pci model file) (outputdir)"
+    exit(1)
+
+linux_dir = sys.argv[1]
+model_file = sys.argv[2]
+output_dir = sys.argv[3]
+
+f = open(output_dir + "/traverse.txt")
+lines = f.readlines()
+f.close()
+
 pci_drivers = defaultdict(dict)
 dev_pm_ops = defaultdict(dict)
 pci_error_handlers = defaultdict(dict)
-for line in sys.stdin:
+for line in lines:
     line_split = line.strip().split('\t')
     type = line_split[0]
     func = line_split[1]
@@ -87,7 +102,7 @@ for line in sys.stdin:
     struct = type[:type.find("::")]
     structFunc = type[type.find("::") + 2:]
     
-    file = func[:func.rfind("/")] + ".c"
+    file = linux_dir + "/" + func[:func.rfind("/")] + ".c"
     callback = func[func.rfind("/") + 1:]
     
     if struct != "pci_driver" and struct != "dev_pm_ops" and struct != "pci_error_handlers":
@@ -99,11 +114,11 @@ for line in sys.stdin:
     if struct == "pci_error_handlers":
         pci_error_handlers[file][structFunc] = callback
 
-f = open("models/pci.c", "r")
+f = open(model_file, "r")
 scenarioStr = f.read()
 f.close()
 
-f2 = open("stat/build_target.txt", "w")
+f2 = open(output_dir + "/build_target.txt", "w")
 for file in pci_drivers.keys():
     defineStr = "#define TEST_PCI_DRIVER\n"
     outStr = printStructFunc(pci_callbacks, pci_drivers[file], pci_callback_prefix)
