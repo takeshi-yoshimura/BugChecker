@@ -589,6 +589,7 @@ void IRQChecker::reportIrqLeak(const IRQState &state, CheckerContext &context) c
 		llvm::raw_svector_ostream os(buf);
 		os << state.getIrqString() << " with " << state.getDevIdString() << " is never freed";
 		BugReport *reporter = new BugReport(*typeLeakIrq, os.str(), node);
+		reporter->disablePathPruning();
 		state.markForBugReport(reporter);
 		context.emitReport(reporter);
 	}
