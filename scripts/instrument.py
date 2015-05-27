@@ -65,6 +65,14 @@ def printStructFunc(callbacks, opsForFile, prefix):
                 outStr += "\treturn " + callStr + "\n"
             else:
                 outStr += "\t" + callStr + "\n"
+            if structFunc == "shutdown":
+                print "DEBUG: pci_driver::shutdown == " + opsForFile["shutdown"]
+        elif callbacks == pci_callbacks and structFunc == "shutdown" and opsForFile.has_key("remove"):
+            callStr = opsForFile["remove"] + "("
+            for arg in args[:-1]:
+                callStr += args[1] + ", "
+            callStr += args[-1][1] + ");"
+            outStr += "\t" + callStr + "\n"
         else:
             if callbacks[structFunc][0] != "void":
                 outStr += "\treturn 0;\n"
