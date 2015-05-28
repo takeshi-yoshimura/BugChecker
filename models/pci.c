@@ -2,8 +2,7 @@
  * each function must be called only once due to clang static analyzer limitation...
  */
 
-static char sval[4096];
-static char *s = sval;
+extern int random();
 
 #ifdef TEST_PCI_DRIVER
 static int  wrapper_pci_driver_probe(struct pci_dev *dev, const struct pci_device_id *id);
@@ -81,7 +80,7 @@ static int simple_hibernate(struct device *dev) {
 		return -1;
 	}
 	/* hibernation aborts if *any* device fails to hibernate */
-	if (*(s++) % 2) {
+	if (random() % 2) {
 		/* call dpm_resume_start(PMSG_RECOVER or PMSG_THAW) */
 		wrapper_pm_thaw_noirq(dev); /* = dpm_resume_noirq(PMSG_RECOVER or PMSG_THAW) */
 		wrapper_pm_thaw_early(dev); /* = dpm_resume_early(PMSG_RECOVER or PMSG_THAW) */
@@ -96,7 +95,7 @@ static int simple_hibernate(struct device *dev) {
 	 * on the other hand, ->resume*() assumes resuming the state here, so bifurcate to emulate both situations
 	 */
 
-	if (*(s++) % 2) {
+	if (random() % 2) {
 		/* call dpm_resume_start(PMSG_RESTORE) */
 		wrapper_pm_restore_noirq(dev); /* = dpm_resume_noirq(PMSG_RESTORE) */
 		wrapper_pm_restore_early(dev); /* = dpm_resume_early(PMSG_RESTORE) */
@@ -180,7 +179,7 @@ static void simple_resume(struct device *dev) {
 /* common pm interfaces. see Documentation/power/pci.txt */
 static void pci_pm_state_transition(struct pci_dev *pdev, enum TEST_PCI_STATE *state) {
 	struct device *dev = &pdev->dev;
-	switch (*(s++) % 3) {
+	switch (random() % 3) {
 	case 0: /* suspend & resume */
 		if (simple_suspend(dev) < 0) {
 			break;
@@ -188,7 +187,7 @@ static void pci_pm_state_transition(struct pci_dev *pdev, enum TEST_PCI_STATE *s
 
 #ifdef TEST_PCI_DRIVER
 		/* suspended devices may be removed */
-		if (*(s++) % 2) {
+		if (random() % 2) {
 			wrapper_pci_driver_remove(pdev);
 			*state = PCI_STATE_REMOVED;
 			break;
@@ -203,7 +202,7 @@ static void pci_pm_state_transition(struct pci_dev *pdev, enum TEST_PCI_STATE *s
 
 #ifdef TEST_PCI_DRIVER
 		/* hibernated devices may be removed */
-		if (*(s++) % 2) {
+		if (random() % 2) {
 			wrapper_pci_driver_remove(pdev);
 			*state = PCI_STATE_REMOVED;
 			break;
@@ -296,9 +295,9 @@ static void wrapper_pci_error_handlers_resume(struct pci_dev *dev);
 /* see Documentation/PCI/pci-error-recovery.txt */
 static void pci_error_handlers_state_transition(struct pci_dev *pdev, enum TEST_PCI_STATE *state) {
 	/* STEP 1: Notification */
-	switch(wrapper_pci_error_handlers_error_detected(pdev, *(s++) % 3 + 1)) {
+	switch(wrapper_pci_error_handlers_error_detected(pdev, random() % 3 + 1)) {
 	case PCI_ERS_RESULT_CAN_RECOVER:
-		if (*(s++) % 2)
+		if (random() % 2)
 			goto mmio_enable; /* If **all** drivers on the segment/slot return PCI_ERS_RESULT_CAN_RECOVER */
 		goto slot_reset; /* If **any** driver requested a slot reset (by returning PCI_ERS_RESULT_NEED_RESET) */
 	case PCI_ERS_RESULT_NEED_RESET:
@@ -311,7 +310,7 @@ static void pci_error_handlers_state_transition(struct pci_dev *pdev, enum TEST_
 mmio_enable: /* STEP 2: MMIO Enable */
 	switch(wrapper_pci_error_handlers_mmio_enabled(pdev)) {
 	case PCI_ERS_RESULT_RECOVERED:
-		if (*(s++) % 2)
+		if (random() % 2)
 			goto link_reset; /* link reset operations will probably be ignored */
 		goto slot_reset; /* If **any** driver returned PCI_ERS_RESULT_NEED_RESET */
 	case PCI_ERS_RESULT_NEED_RESET:
@@ -335,7 +334,7 @@ link_reset: /* STEP 3: Link Reset */
 slot_reset: /* STEP 4: Slot Reset */
 	switch(wrapper_pci_error_handlers_slot_reset(pdev)) {
 	case PCI_ERS_RESULT_RECOVERED:
-		if (*(s++) % 2)
+		if (random() % 2)
 			goto resume_operation;
 		goto permanent_failure;
 	case PCI_ERS_RESULT_DISCONNECT:
@@ -370,7 +369,7 @@ reprobe:
 	state = PCI_STATE_PROBED;
 
 normal_operation:
-	switch(*(s++) % 4) {
+	switch(random() % 4) {
 	case PCI_EVENT_PM:
 		pci_pm_state_transition(pdev, &state);
 		break;
@@ -380,14 +379,14 @@ normal_operation:
 	case PCI_EVENT_REMOVE:
 		wrapper_pci_driver_remove(pdev);
 		state = PCI_STATE_REMOVED;
-		if (*(s++) % 2 && loop++ < 10) {
+		if (random() % 2 && loop++ < 10) {
 			goto reprobe;
 		}
 		break;
 	default:
 		idle_pci_driver(pdev);
 	}
-	if (*(s++) % 2 && loop++ < 10 && state == PCI_STATE_PROBED) {
+	if (random() % 2 && loop++ < 10 && state == PCI_STATE_PROBED) {
 		goto normal_operation;
 	}
 
