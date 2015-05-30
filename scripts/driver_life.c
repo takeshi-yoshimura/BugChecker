@@ -21,8 +21,6 @@ enum TEST_PCI_EVENT {
 	PCI_EVENT_REMOVE = 0, PCI_EVENT_PM, PCI_EVENT_ERROR, PCI_EVENT_IDLE,
 };
 
-#endif /* TEST_PCI_DRIVER */
-
 static int  wrapper_pm_prepare(struct device *dev);
 static void wrapper_pm_complete(struct device *dev);
 static int  wrapper_pm_suspend(struct device *dev);
@@ -185,14 +183,12 @@ static void pci_pm_state_transition(struct pci_dev *pdev, enum TEST_PCI_STATE *s
 			break;
 		}
 
-#ifdef TEST_PCI_DRIVER
 		/* suspended devices may be removed */
 		if (random() % 2) {
 			wrapper_pci_driver_remove(pdev);
 			*state = PCI_STATE_REMOVED;
 			break;
 		}
-#endif /* TEST_PCI_DRIVER */
 		simple_resume(dev);
 		break;
 	case 1: /* hibernation & restore */
@@ -200,14 +196,12 @@ static void pci_pm_state_transition(struct pci_dev *pdev, enum TEST_PCI_STATE *s
 			break;
 		}
 
-#ifdef TEST_PCI_DRIVER
 		/* hibernated devices may be removed */
 		if (random() % 2) {
 			wrapper_pci_driver_remove(pdev);
 			*state = PCI_STATE_REMOVED;
 			break;
 		}
-#endif /* TEST_PCI_DRIVER */
 
 		simple_restore(dev);
 		break;
@@ -217,8 +211,6 @@ static void pci_pm_state_transition(struct pci_dev *pdev, enum TEST_PCI_STATE *s
 	}
 }
 
-
-#ifdef TEST_PCI_DRIVER
 
 #ifndef TEST_PM
 
@@ -378,19 +370,21 @@ normal_operation:
 		break;
 	case PCI_EVENT_REMOVE:
 		wrapper_pci_driver_remove(pdev);
-		state = PCI_STATE_REMOVED;
-		if (random() % 2 && loop++ < 10) {
-			goto reprobe;
-		}
 		break;
 	default:
 		idle_pci_driver(pdev);
 	}
-	if (random() % 2 && loop++ < 10 && state == PCI_STATE_PROBED) {
-		goto normal_operation;
+	if (random() % 2 && loop++ < 1) {
+		if (state == PCI_STATE_PROBED) {
+			goto normal_operation;
+		} else {
+			goto reprobe;
+		}
 	}
 
-	wrapper_pci_driver_shutdown(pdev);
+	if (state == PCI_STATE_PROBED) {
+		wrapper_pci_driver_shutdown(pdev);
+	}
 }
 
 #endif /* TEST_PCI_DRIVER */
@@ -401,11 +395,11 @@ normal_operation:
  */
 
 #ifdef TEST_PLATFORM_DRIVER
-static int  wrapper_platform_driver_probe(struct platform_dev *dev, const struct platform_device_id *id);
-static void wrapper_platform_driver_remove(struct platform_dev *dev);
-static int  wrapper_platform_driver_suspend(struct platform_dev *dev, pm_message_t state);
-static int  wrapper_platform_driver_resume(struct platform_dev *dev);
-static void wrapper_platform_driver_shutdown(struct platform_dev *dev);
+static int  wrapper_platform_driver_probe(struct platform_device *dev);
+static void wrapper_platform_driver_remove(struct platform_device *dev);
+static int  wrapper_platform_driver_suspend(struct platform_device *dev, pm_message_t state);
+static int  wrapper_platform_driver_resume(struct platform_device *dev);
+static void wrapper_platform_driver_shutdown(struct platform_device *dev);
 
 enum TEST_PLATFORM_STATE {
 	PLATFORM_STATE_PROBED = 0, PLATFORM_STATE_REMOVED, PLATFORM_STATE_DEAD,
@@ -414,13 +408,13 @@ enum TEST_PLATFORM_EVENT {
 	PLATFORM_EVENT_REMOVE = 0, PLATFORM_EVENT_PM, PLATFORM_EVENT_IDLE,
 };
 
-static void idle_platform_driver(struct platform_dev *pdev) { }
+static void idle_platform_driver(struct platform_device *pdev) { }
 
-static void TestPlatformDriver(struct platform_device *pdev, pm_message_t state, struct platform_device_id *id) {
+static void TestPlatformDriver(struct platform_device *pdev, pm_message_t msg, struct platform_device_id *id) {
 	int loop = 0;
 	enum TEST_PLATFORM_STATE state;
 reprobe:
-	if (wrapper_platform_driver_probe(pdev, id)) {
+	if (wrapper_platform_driver_probe(pdev)) {
 		return;
 	}
 	state = PLATFORM_STATE_PROBED;
@@ -428,35 +422,36 @@ reprobe:
 normal_operation:
 	switch(random() % 3) {
 	case PLATFORM_EVENT_PM:
-		if (wrapper_platform_driver_suspend(dev, state) < 0) {
+		if (wrapper_platform_driver_suspend(pdev, msg) < 0) {
 			break;
 		}
 
 		/* suspended devices may be removed */
 		if (random() % 2) {
 			wrapper_platform_driver_remove(pdev);
-			*state = PLATFORM_STATE_REMOVED;
-			if (random() % 2 && loop++ < 10) {
-				goto reprobe;
-			}
+			state = PLATFORM_STATE_REMOVED;
+		} else {
+			wrapper_platform_driver_resume(pdev);
 		}
-		wrapper_platform_driver_resume(dev);
 		break;
 	case PLATFORM_EVENT_REMOVE:
 		wrapper_platform_driver_remove(pdev);
 		state = PLATFORM_STATE_REMOVED;
-		if (random() % 2 && loop++ < 10) {
-			goto reprobe;
-		}
 		break;
 	default:
 		idle_platform_driver(pdev);
 	}
-	if (random() % 2 && loop++ < 10 && state == PLATFORM_STATE_PROBED) {
-		goto normal_operation;
+	if (random() % 2 && loop++ < 1) {
+		if (state == PLATFORM_STATE_PROBED) {
+			goto normal_operation;
+		} else {
+			goto reprobe;
+		}
 	}
 
-	wrapper_platform_driver_shutdown(pdev);
+	if (state == PLATFORM_STATE_PROBED) {
+		wrapper_platform_driver_shutdown(pdev);
+	}
 }
 
 #endif /* TEST_PLATFORM_DRIVER */
@@ -491,20 +486,23 @@ reprobe:
 normal_operation:
 	switch(random() % 2) {
 	case I2C_EVENT_REMOVE:
-		wrapper_i2c_driver_remove(pdev);
+		wrapper_i2c_driver_remove(cl);
 		state = I2C_STATE_REMOVED;
-		if (random() % 2 && loop++ < 10) {
-			goto reprobe;
-		}
 		break;
 	default:
-		idle_i2c_driver(pdev);
+		idle_i2c_driver(cl);
 	}
-	if (random() % 2 && loop++ < 10 && state == I2C_STATE_PROBED) {
-		goto normal_operation;
+	if (random() % 2 && loop++ < 1) {
+		if (state == I2C_STATE_PROBED) {
+			goto normal_operation;
+		} else {
+			goto reprobe;
+		}
 	}
 
-	wrapper_i2c_driver_shutdown(pdev);
+	if (state == I2C_STATE_PROBED) {
+		wrapper_i2c_driver_shutdown(cl);
+	}
 }
 
 #endif /* TEST_I2C_DRIVER */
