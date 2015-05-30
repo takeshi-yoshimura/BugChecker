@@ -270,7 +270,7 @@ namespace {
 		mutable std::unique_ptr<BugType> typeFreeRequestFailedIrq;
 		void reportFreeRequestFailedIrq(const IRQState &state, CheckerContext &context) const;
 		mutable std::unique_ptr<BugType> typeLeakIrq;
-		void reportIrqLeak(const IRQState &state, CheckerContext &context) const;
+		void reportIrqLeak(const IRQState &state, SmallVector<IRQState, 32> freed, CheckerContext &context) const;
 		/*
 		* wrong free should be checked as leaks because of pointer escapes
 		mutable std::unique_ptr<BugType> typeWrongFree;
@@ -500,7 +500,13 @@ void IRQChecker::checkEndFunction(CheckerContext &context) const {
 	ProgramStateRef state = context.getState();
 	for (const IRQState &irqState : state->get<IrqStateSet>()) {
 		if (irqState.isRequested()) {
-			reportIrqLeak(irqState, context);
+			llvm::SmallVector<IRQState, 32> freed;
+			for (IRQState s: state->get<IrqStateSet>()) {
+				if (s.isFreed()) {
+					freed.push_back(s);
+				}
+			}
+			reportIrqLeak(irqState, freed, context);
 			return;
 		}
 	}
@@ -580,7 +586,7 @@ void IRQChecker::reportFreeRequestFailedIrq(const IRQState &state, CheckerContex
 	}
 }
 
-void IRQChecker::reportIrqLeak(const IRQState &state, CheckerContext &context) const {
+void IRQChecker::reportIrqLeak(const IRQState &state, SmallVector<IRQState, 32> freed, CheckerContext &context) const {
 	if (ExplodedNode *node = context.generateSink()) {
 		if (!typeLeakIrq)
 			typeLeakIrq.reset(new BugType(this, "IRQ Leak", "IRQ Error"));
@@ -589,7 +595,10 @@ void IRQChecker::reportIrqLeak(const IRQState &state, CheckerContext &context) c
 		llvm::raw_svector_ostream os(buf);
 		os << state.getIrqString() << " with " << state.getDevIdString() << " is never freed";
 		BugReport *reporter = new BugReport(*typeLeakIrq, os.str(), node);
-		reporter->disablePathPruning();
+		//reporter->disablePathPruning();
+		for (IRQState s : freed) {
+			s.markForBugReport(reporter);
+		}
 		state.markForBugReport(reporter);
 		context.emitReport(reporter);
 	}
