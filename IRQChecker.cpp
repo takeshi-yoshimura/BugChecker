@@ -7,60 +7,248 @@
 using namespace clang;
 using namespace ento;
 
-namespace {
+StringRef getTypeInfoString(const Expr *expr) {
+	if (const DeclRefExpr *declExpr = dyn_cast_or_null<DeclRefExpr>(expr->IgnoreParenCasts())) {
+		if (const VarDecl *decl = dyn_cast_or_null<VarDecl>(declExpr->getDecl()))
+			return decl->getName();
+		else if (const FunctionDecl *decl = dyn_cast_or_null<FunctionDecl>(declExpr->getDecl()))
+			return decl->getName();
+	}
+	else if (const MemberExpr *declExpr = dyn_cast_or_null<MemberExpr>(expr)) {
+		if (const MemberExpr *decl = dyn_cast_or_null<MemberExpr>(declExpr))
+			return decl->getMemberNameInfo().getAsString();
+	}
+	return StringRef(expr->getStmtClassName());
+}
 
-	StringRef getTypeInfoString(const Expr *expr) {
-		if (const DeclRefExpr *declExpr = dyn_cast_or_null<DeclRefExpr>(expr->IgnoreParenCasts())) {
-			if (const VarDecl *decl = dyn_cast_or_null<VarDecl>(declExpr->getDecl()))
-				return decl->getName();
-			else if (const FunctionDecl *decl = dyn_cast_or_null<FunctionDecl>(declExpr->getDecl()))
-				return decl->getName();
-		}
-		else if (const MemberExpr *declExpr = dyn_cast_or_null<MemberExpr>(expr)) {
-			if (const MemberExpr *decl = dyn_cast_or_null<MemberExpr>(declExpr))
-				return decl->getMemberNameInfo().getAsString();
-		}
-		return StringRef(expr->getStmtClassName());
+SymbolRef getRootRegionSymbol(SymbolRef sym) {
+	MemRegion * root = nullptr;
+	if (const SymbolRegionValue * symRegion = dyn_cast_or_null<SymbolRegionValue>(sym)) {
+		root = const_cast<MemRegion *>(symRegion->getRegion()->getBaseRegion());
+	}
+	else if (const SymbolMetadata *symRegion = dyn_cast_or_null<SymbolMetadata>(sym)) {
+		root = const_cast<MemRegion *>(symRegion->getRegion()->getBaseRegion());
+	}
+	else if (const SymbolExtent *symRegion = dyn_cast_or_null<SymbolExtent>(sym)) {
+		root = const_cast<MemRegion *>(symRegion->getRegion()->getBaseRegion());
+	}
+	else if (const SymbolDerived *symRegion = dyn_cast_or_null<SymbolDerived>(sym)) {
+		root = const_cast<MemRegion *>(symRegion->getRegion()->getBaseRegion());
 	}
 
-	SymbolRef getRootRegionSymbol(SymbolRef sym) {
-		MemRegion * root = nullptr;
-		if (const SymbolRegionValue * symRegion = dyn_cast_or_null<SymbolRegionValue>(sym)) {
-			root = const_cast<MemRegion *>(symRegion->getRegion()->getBaseRegion());
-		}
-		else if (const SymbolMetadata *symRegion = dyn_cast_or_null<SymbolMetadata>(sym)) {
-			root = const_cast<MemRegion *>(symRegion->getRegion()->getBaseRegion());
-		}
-		else if (const SymbolExtent *symRegion = dyn_cast_or_null<SymbolExtent>(sym)) {
-			root = const_cast<MemRegion *>(symRegion->getRegion()->getBaseRegion());
-		}
-		else if (const SymbolDerived *symRegion = dyn_cast_or_null<SymbolDerived>(sym)) {
-			root = const_cast<MemRegion *>(symRegion->getRegion()->getBaseRegion());
-		}
+	if (const SymbolicRegion *rootRegion = dyn_cast_or_null<SymbolicRegion>(root)) {
+		return rootRegion->getSymbol(); //a root region is usually a symbol
+	}
+	return nullptr; // the root region is not a symbol, therefore we return a nullptr
+}
 
-		if (const SymbolicRegion *rootRegion = dyn_cast_or_null<SymbolicRegion>(root)) {
-			return rootRegion->getSymbol(); //a root region is usually a symbol
-		}
-		return nullptr; // the root region is not a symbol, therefore we return a nullptr
+const MemRegion * getRegion(SymbolRef sym) {
+	if (const SymbolRegionValue * symRegion = dyn_cast_or_null<SymbolRegionValue>(sym)) {
+		return symRegion->getRegion();
+	}
+	else if (const SymbolMetadata *symRegion = dyn_cast_or_null<SymbolMetadata>(sym)) {
+		return symRegion->getRegion();
+	}
+	else if (const SymbolExtent *symRegion = dyn_cast_or_null<SymbolExtent>(sym)) {
+		return symRegion->getRegion();
+	}
+	else if (const SymbolDerived *symRegion = dyn_cast_or_null<SymbolDerived>(sym)) {
+		return symRegion->getRegion();
+	}
+	return nullptr; // the root region is not a symbol, therefore we return a nullptr
+}
+
+class IRQBugVisitor : public BugReporterVisitorImpl <IRQBugVisitor> {
+protected:
+	SVal val;
+	bool isLeak;
+
+public:
+	IRQBugVisitor(const SVal val_, bool isLeak_) : val(val_), isLeak(isLeak_) {}
+	~IRQBugVisitor() override {}
+
+	void Profile(llvm::FoldingSetNodeID &ID) const override {
+		static int X = 0;
+		ID.AddPointer(&X);
+		val.Profile(ID);
 	}
 
-	const MemRegion * getRegion(SymbolRef sym) {
-		if (const SymbolRegionValue * symRegion = dyn_cast_or_null<SymbolRegionValue>(sym)) {
-			return symRegion->getRegion();
-		}
-		else if (const SymbolMetadata *symRegion = dyn_cast_or_null<SymbolMetadata>(sym)) {
-			return symRegion->getRegion();
-		}
-		else if (const SymbolExtent *symRegion = dyn_cast_or_null<SymbolExtent>(sym)) {
-			return symRegion->getRegion();
-		}
-		else if (const SymbolDerived *symRegion = dyn_cast_or_null<SymbolDerived>(sym)) {
-			return symRegion->getRegion();
-		}
-		return nullptr; // the root region is not a symbol, therefore we return a nullptr
+	PathDiagnosticPiece *VisitNode(const ExplodedNode *N, const ExplodedNode *PrevN, BugReporterContext &BRC, BugReport &BR) override;
+
+	std::unique_ptr<PathDiagnosticPiece> getEndPath(BugReporterContext &BRC, const ExplodedNode *EndPathNode, BugReport &BR) override {
+		if (!isLeak)
+			return nullptr;
+
+		PathDiagnosticLocation L = PathDiagnosticLocation::createEndOfPath(EndPathNode, BRC.getSourceManager());
+		// Do not add the statement itself as a range in case of leak.
+		return llvm::make_unique<PathDiagnosticEventPiece>(L, BR.getDescription(), false);
 	}
+};
 
 #define IRQF_SHARED 0x00000080 // include/linux/interrupt.h
+
+class IRQState {
+	enum Kind {
+		Unique, Shared
+	} k;
+	enum SubKind {
+		Requested, RequestFailed, Freed, Escaped
+	} k2;
+	const Expr *irqExpr, *devIdExpr; //for memory leak diagnosis
+	const SVal irqVal, devIdVal;
+
+	IRQState(Kind k_, SubKind k2_, const Expr *irqExpr_, const Expr *devIdExpr_, const SVal &irqVal_, const SVal &devIdVal_)
+		: k(k_), k2(k2_), irqExpr(irqExpr_), devIdExpr(devIdExpr_), irqVal(irqVal_), devIdVal(devIdVal_) {}
+
+public:
+	bool isUnique() const { return k == Unique; }
+	bool isShared() const { return k == Shared; }
+	bool isRequested() const { return k2 == Requested; }
+	bool isRequestFailed() const { return k2 == RequestFailed; }
+	bool isFreed() const { return k2 == Freed; }
+	bool isEscaped() const { return k2 == Escaped; }
+
+	bool isSameIrq(const SVal &irqVal_) const {
+		if (SymbolRef irqSym_ = irqVal_.getAsSymbol()) {
+			return irqVal.getAsSymbol() == irqSym_;
+		}
+		return irqVal == irqVal_;
+	}
+	bool isSameIrq(SymbolRef irqSym_) const {
+		return irqSym_ != nullptr && irqVal.getAsSymbol() == irqSym_;
+	}
+	bool isSameDevId(const SVal &devIdVal_) const {
+		if (SymbolRef devIdSym_ = devIdVal_.getAsSymbol()) {
+			return devIdVal.getAsSymbol() == devIdSym_;
+		}
+		return devIdVal == devIdVal_;
+	}
+	bool isSameDevId(SymbolRef devIdSym_) const {
+		return devIdSym_ != nullptr && devIdVal.getAsSymbol() == devIdSym_;
+	}
+	bool isSameIrq(const IRQState &other) const {
+		return isSameIrq(other.irqVal) && isSameDevId(other.devIdVal);
+	}
+	bool isIrqInEscapedRegion(SymbolRef escaped) const {
+		SymbolRef rootSym = irqVal.getAsSymbol();
+		while ((rootSym = getRootRegionSymbol(rootSym)) != nullptr) {
+			if (rootSym == escaped)
+				return true;
+		}
+		return false;
+	}
+	bool isIrqInRegionOf(const MemRegion * region) const {
+		SymbolRef rootSym = irqVal.getAsSymbol();
+		while (const MemRegion * mem = getRegion(rootSym)) {
+			rootSym = getRootRegionSymbol(rootSym);
+			if (mem->isSubRegionOf(region))
+				return true;
+		}
+		return false;
+	}
+	bool isDevIdInEscapedRegion(SymbolRef escaped) const {
+		SymbolRef rootSym = devIdVal.getAsSymbol();
+		while ((rootSym = getRootRegionSymbol(rootSym)) != nullptr) {
+			if (rootSym == escaped)
+				return true;
+		}
+		return false;
+	}
+	bool isDevIdInRegionOf(const MemRegion * region) const {
+		SymbolRef rootSym = devIdVal.getAsSymbol();
+		while (const MemRegion * mem = getRegion(rootSym)) {
+			rootSym = getRootRegionSymbol(rootSym);
+			if (mem->isSubRegionOf(region))
+				return true;
+		}
+		return false;
+	}
+
+	static IRQState getRequested(bool isUnique, const Expr * irqExpr_,
+		const Expr *devIdExpr_, const SVal &irqVal_, const SVal &devIdVal_) {
+		Kind k_ = (isUnique) ? Unique : Shared;
+		return IRQState(k_, Requested, irqExpr_, devIdExpr_, irqVal_, devIdVal_);
+	}
+	static IRQState getRequested(const IRQState &other) {
+		return getRequested(other.isUnique(), other.irqExpr, other.devIdExpr, other.irqVal, other.devIdVal);
+	}
+
+	static IRQState getRequestFailed(bool isUnique, const Expr * irqExpr_,
+		const Expr *devIdExpr_, const SVal &irqVal_, const SVal &devIdVal_) {
+		Kind k_ = (isUnique) ? Unique : Shared;
+		return IRQState(k_, RequestFailed, irqExpr_, devIdExpr_, irqVal_, devIdVal_);
+	}
+	static IRQState getRequestFailed(const IRQState &other) {
+		return getRequestFailed(other.isUnique(), other.irqExpr, other.devIdExpr, other.irqVal, other.devIdVal);
+	}
+
+	static IRQState getFreed(bool isUnique, const Expr * irqExpr_,
+		const Expr *devIdExpr_, const SVal &irqVal_, const SVal &devIdVal_) {
+		Kind k_ = (isUnique) ? Unique : Shared;
+		return IRQState(k_, Freed, irqExpr_, devIdExpr_, irqVal_, devIdVal_);
+	}
+	static IRQState getFreed(const IRQState &other) {
+		return getFreed(other.isUnique(), other.irqExpr, other.devIdExpr, other.irqVal, other.devIdVal);
+	}
+
+	static IRQState getEscaped(bool isUnique, const Expr * irqExpr_,
+		const Expr *devIdExpr_, const SVal &irqVal_, const SVal &devIdVal_) {
+		Kind k_ = (isUnique) ? Unique : Shared;
+		return IRQState(k_, Escaped, irqExpr_, devIdExpr_, irqVal_, devIdVal_);
+	}
+	static IRQState getEscaped(const IRQState &other) {
+		return getEscaped(other.isUnique(), other.irqExpr, other.devIdExpr, other.irqVal, other.devIdVal);
+	}
+
+	void markForBugReport(BugReport *reporter, bool isLeak) const {
+		reporter->addRange(irqExpr->getSourceRange());
+		reporter->markInteresting(irqVal);
+		reporter->markInteresting(devIdVal);
+		reporter->addVisitor(llvm::make_unique<IRQBugVisitor>(irqVal, isLeak));
+		reporter->addVisitor(llvm::make_unique<IRQBugVisitor>(devIdVal, isLeak));
+	}
+
+	StringRef getIrqString() const {
+		return getTypeInfoString(irqExpr);
+	}
+	StringRef getDevIdString() const {
+		return getTypeInfoString(devIdExpr);
+	}
+
+	bool operator==(const IRQState &X) const {
+		return k == X.k && k2 == X.k2 &&
+			irqVal == X.irqVal && devIdVal == X.devIdVal &&
+			irqExpr == X.irqExpr && devIdExpr == X.devIdExpr;
+	}
+
+	bool operator<(const IRQState &X) const {
+		if (k != X.k)
+			return k < X.k;
+		if (k2 != X.k2)
+			return k2 < X.k2;
+		if (irqExpr != X.irqExpr)
+			return irqExpr < X.irqExpr;
+		if (devIdExpr != X.devIdExpr)
+			return devIdExpr < X.devIdExpr;
+		if (irqVal != X.irqVal) {
+			const ComparableSVal &l(static_cast<const ComparableSVal &>(irqVal));
+			const ComparableSVal &r(static_cast<const ComparableSVal &>(X.irqVal));
+			return l < r;
+		}
+		const ComparableSVal &l(static_cast<const ComparableSVal &>(devIdVal));
+		const ComparableSVal &r(static_cast<const ComparableSVal &>(X.devIdVal));
+		return l < r;
+	}
+
+	void Profile(llvm::FoldingSetNodeID &ID) const {
+		ID.AddInteger(k);
+		ID.AddInteger(k2);
+		ID.AddPointer(irqExpr);
+		ID.AddPointer(devIdExpr);
+		irqVal.Profile(ID);
+		devIdVal.Profile(ID);
+	}
+private:
 
 	//used only in IRQState::operator<() in order to use REGISTER_SET_WITH_PROGRAMSTATE
 	class ComparableSVal : public SVal {
@@ -71,215 +259,48 @@ namespace {
 			return Data < other.Data;
 		}
 	};
-
-	class IRQState {
-		enum Kind {
-			Unique, Shared
-		} k;
-		enum SubKind {
-			Requested, RequestFailed, Freed, Escaped
-		} k2;
-		const Expr *irqExpr, *devIdExpr; //for memory leak diagnosis
-		const SVal irqVal, devIdVal;
-
-		IRQState(Kind k_, SubKind k2_, const Expr *irqExpr_, const Expr *devIdExpr_, const SVal &irqVal_, const SVal &devIdVal_)
-			: k(k_), k2(k2_), irqExpr(irqExpr_), devIdExpr(devIdExpr_), irqVal(irqVal_), devIdVal(devIdVal_) {}
-
-	public:
-		bool isUnique() const { return k == Unique; }
-		bool isShared() const { return k == Shared; }
-		bool isRequested() const { return k2 == Requested; }
-		bool isRequestFailed() const { return k2 == RequestFailed; }
-		bool isFreed() const { return k2 == Freed; }
-		bool isEscaped() const { return k2 == Escaped; }
-
-		bool isSameIrq(const SVal &irqVal_) const {
-			if (SymbolRef irqSym_ = irqVal_.getAsSymbol()) {
-				return irqVal.getAsSymbol() == irqSym_;
-			}
-			return irqVal == irqVal_;
-		}
-		bool isSameIrq(SymbolRef irqSym_) const {
-			return irqSym_ != nullptr && irqVal.getAsSymbol() == irqSym_;
-		}
-		bool isSameDevId(const SVal &devIdVal_) const {
-			if (SymbolRef devIdSym_ = devIdVal_.getAsSymbol()) {
-				return devIdVal.getAsSymbol() == devIdSym_;
-			}
-			return devIdVal == devIdVal_;
-		}
-		bool isSameDevId(SymbolRef devIdSym_) const {
-			return devIdSym_ != nullptr && devIdVal.getAsSymbol() == devIdSym_;
-		}
-		bool isSameIrq(const IRQState &other) const {
-			return isSameIrq(other.irqVal) && isSameDevId(other.devIdVal);
-		}
-		bool isIrqInEscapedRegion(SymbolRef escaped) const {
-			SymbolRef rootSym = irqVal.getAsSymbol();
-			while ((rootSym = getRootRegionSymbol(rootSym)) != nullptr) {
-				if (rootSym == escaped)
-					return true;
-			}
-			return false;
-		}
-		bool isIrqInRegionOf(const MemRegion * region) const {
-			SymbolRef rootSym = irqVal.getAsSymbol();
-			while (const MemRegion * mem = getRegion(rootSym)) {
-				rootSym = getRootRegionSymbol(rootSym);
-				if (mem->isSubRegionOf(region))
-					return true;
-			}
-			return false;
-		}
-		bool isDevIdInEscapedRegion(SymbolRef escaped) const {
-			SymbolRef rootSym = devIdVal.getAsSymbol();
-			while ((rootSym = getRootRegionSymbol(rootSym)) != nullptr) {
-				if (rootSym == escaped)
-					return true;
-			}
-			return false;
-		}
-		bool isDevIdInRegionOf(const MemRegion * region) const {
-			SymbolRef rootSym = devIdVal.getAsSymbol();
-			while (const MemRegion * mem = getRegion(rootSym)) {
-				rootSym = getRootRegionSymbol(rootSym);
-				if (mem->isSubRegionOf(region))
-					return true;
-			}
-			return false;
-		}
-
-		static IRQState getRequested(bool isUnique, const Expr * irqExpr_,
-			const Expr *devIdExpr_, const SVal &irqVal_, const SVal &devIdVal_) {
-			Kind k_ = (isUnique) ? Unique : Shared;
-			return IRQState(k_, Requested, irqExpr_, devIdExpr_, irqVal_, devIdVal_);
-		}
-		static IRQState getRequested(const IRQState &other) {
-			return getRequested(other.isUnique(), other.irqExpr, other.devIdExpr, other.irqVal, other.devIdVal);
-		}
-
-		static IRQState getRequestFailed(bool isUnique, const Expr * irqExpr_,
-			const Expr *devIdExpr_, const SVal &irqVal_, const SVal &devIdVal_) {
-			Kind k_ = (isUnique) ? Unique : Shared;
-			return IRQState(k_, RequestFailed, irqExpr_, devIdExpr_, irqVal_, devIdVal_);
-		}
-		static IRQState getRequestFailed(const IRQState &other) {
-			return getRequestFailed(other.isUnique(), other.irqExpr, other.devIdExpr, other.irqVal, other.devIdVal);
-		}
-
-		static IRQState getFreed(bool isUnique, const Expr * irqExpr_,
-			const Expr *devIdExpr_, const SVal &irqVal_, const SVal &devIdVal_) {
-			Kind k_ = (isUnique) ? Unique : Shared;
-			return IRQState(k_, Freed, irqExpr_, devIdExpr_, irqVal_, devIdVal_);
-		}
-		static IRQState getFreed(const IRQState &other) {
-			return getFreed(other.isUnique(), other.irqExpr, other.devIdExpr, other.irqVal, other.devIdVal);
-		}
-
-		static IRQState getEscaped(bool isUnique, const Expr * irqExpr_,
-			const Expr *devIdExpr_, const SVal &irqVal_, const SVal &devIdVal_) {
-			Kind k_ = (isUnique) ? Unique : Shared;
-			return IRQState(k_, Escaped, irqExpr_, devIdExpr_, irqVal_, devIdVal_);
-		}
-		static IRQState getEscaped(const IRQState &other) {
-			return getEscaped(other.isUnique(), other.irqExpr, other.devIdExpr, other.irqVal, other.devIdVal);
-		}
-
-		void markForBugReport(BugReport *reporter) const {
-			reporter->addRange(irqExpr->getSourceRange());
-			reporter->markInteresting(irqVal);
-			reporter->markInteresting(devIdVal);
-		}
-
-		StringRef getIrqString() const {
-			return getTypeInfoString(irqExpr);
-		}
-		StringRef getDevIdString() const {
-			return getTypeInfoString(devIdExpr);
-		}
-
-		bool operator==(const IRQState &X) const {
-			return k == X.k && k2 == X.k2 &&
-				irqVal == X.irqVal && devIdVal == X.devIdVal &&
-				irqExpr == X.irqExpr && devIdExpr == X.devIdExpr;
-		}
-
-		bool operator<(const IRQState &X) const {
-			if (k != X.k)
-				return k < X.k;
-			if (k2 != X.k2)
-				return k2 < X.k2;
-			if (irqExpr != X.irqExpr)
-				return irqExpr < X.irqExpr;
-			if (devIdExpr != X.devIdExpr)
-				return devIdExpr < X.devIdExpr;
-			if (irqVal != X.irqVal) {
-				const ComparableSVal &l(static_cast<const ComparableSVal &>(irqVal));
-				const ComparableSVal &r(static_cast<const ComparableSVal &>(X.irqVal));
-				return l < r;
-			}
-			const ComparableSVal &l(static_cast<const ComparableSVal &>(devIdVal));
-			const ComparableSVal &r(static_cast<const ComparableSVal &>(X.devIdVal));
-			return l < r;
-		}
-
-		void Profile(llvm::FoldingSetNodeID &ID) const {
-			ID.AddInteger(k);
-			ID.AddInteger(k2);
-			ID.AddPointer(irqExpr);
-			ID.AddPointer(devIdExpr);
-			irqVal.Profile(ID);
-			devIdVal.Profile(ID);
-		}
-	};
-
-
-} //end of anonymous namespace
+};
 
 //main custom state
 REGISTER_SET_WITH_PROGRAMSTATE(IrqStateSet, IRQState)
 
-namespace {
+class IRQChecker : public Checker<eval::Call, check::EndFunction, check::PreCall> {
+public:
+	IRQChecker() :
+		IIrequest_irq(0), IIfree_irq(0), IIrequest_threaded_irq(0) {
+	}
+	bool evalCall(const CallExpr * call, CheckerContext &context) const;
+	void checkPreCall(const CallEvent &call, CheckerContext &context) const;
+	void checkEndFunction(CheckerContext &context) const;
 
-	class IRQChecker : public Checker<eval::Call, check::EndFunction, check::PreCall> {
-	public:
-		IRQChecker() :
-			IIrequest_irq(0), IIfree_irq(0), IIrequest_threaded_irq(0) {
-		}
-		bool evalCall(const CallExpr * call, CheckerContext &context) const;
-		void checkPreCall(const CallEvent &call, CheckerContext &context) const;
-		void checkEndFunction(CheckerContext &context) const;
+private:
+	mutable IdentifierInfo *IIrequest_irq, *IIfree_irq, *IIrequest_threaded_irq;
 
-	private:
-		mutable IdentifierInfo *IIrequest_irq, *IIfree_irq, *IIrequest_threaded_irq;
+	void initIdentifierInfo(ASTContext &astContext) const;
+	const FunctionDecl* ancientCaller(const LocationContext *current) const;
 
-		void initIdentifierInfo(ASTContext &astContext) const;
-		const FunctionDecl* ancientCaller(const LocationContext *current) const;
+	void RequestIRQ(const CallExpr * call, CheckerContext &context, bool isThreaded) const;
+	void FreeIRQ(const CallExpr * call, CheckerContext &context) const;
 
-		void RequestIRQ(const CallExpr * call, CheckerContext &context, bool isThreaded) const;
-		void FreeIRQ(const CallExpr * call, CheckerContext &context) const;
-
-		mutable std::unique_ptr<BugType> typeNullDevId;
-		void reportNullDevId(const SVal * devId, const Expr *devIdExpr, CheckerContext &context) const;
-		mutable std::unique_ptr<BugType> typeDoubleRequestUniqueIrq;
-		void reportDoubleRequestUniqueIrq(const IRQState &state, CheckerContext &context) const;
-		mutable std::unique_ptr<BugType> typeDoubleRequestSharedIrq;
-		void reportDoubleRequestSharedIrq(const IRQState &state, CheckerContext &context) const;
-		mutable std::unique_ptr<BugType> typeDoubleFree;
-		void reportDoubleFree(const IRQState &state, CheckerContext &context) const;
-		mutable std::unique_ptr<BugType> typeFreeRequestFailedIrq;
-		void reportFreeRequestFailedIrq(const IRQState &state, CheckerContext &context) const;
-		mutable std::unique_ptr<BugType> typeLeakIrq;
-		void reportIrqLeak(const IRQState &state, SmallVector<IRQState, 32> freed, CheckerContext &context) const;
-		/*
-		* wrong free should be checked as leaks because of pointer escapes
-		mutable std::unique_ptr<BugType> typeWrongFree;
-		void reportWrongFree(const SVal *irq, const SVal *devId,
-		const Expr *irqExpr, const Expr *devIdExpr, CheckerContext &context) const;
-		*/
-	};
-} // end of anonymous namespace
-
+	mutable std::unique_ptr<BugType> typeNullDevId;
+	void reportNullDevId(const SVal * devId, const Expr *devIdExpr, CheckerContext &context) const;
+	mutable std::unique_ptr<BugType> typeDoubleRequestUniqueIrq;
+	void reportDoubleRequestUniqueIrq(const IRQState &state, CheckerContext &context) const;
+	mutable std::unique_ptr<BugType> typeDoubleRequestSharedIrq;
+	void reportDoubleRequestSharedIrq(const IRQState &state, CheckerContext &context) const;
+	mutable std::unique_ptr<BugType> typeDoubleFree;
+	void reportDoubleFree(const IRQState &state, CheckerContext &context) const;
+	mutable std::unique_ptr<BugType> typeFreeRequestFailedIrq;
+	void reportFreeRequestFailedIrq(const IRQState &state, CheckerContext &context) const;
+	mutable std::unique_ptr<BugType> typeLeakIrq;
+	void reportIrqLeak(const IRQState &state, SmallVector<IRQState, 32> & freed, CheckerContext &context) const;
+	/*
+	* wrong free should be checked as leaks because of pointer escapes
+	mutable std::unique_ptr<BugType> typeWrongFree;
+	void reportWrongFree(const SVal *irq, const SVal *devId,
+	const Expr *irqExpr, const Expr *devIdExpr, CheckerContext &context) const;
+	*/
+};
 
 void IRQChecker::initIdentifierInfo(ASTContext &astContext) const {
 	if (IIrequest_irq)
@@ -501,7 +522,7 @@ void IRQChecker::checkEndFunction(CheckerContext &context) const {
 	for (const IRQState &irqState : state->get<IrqStateSet>()) {
 		if (irqState.isRequested()) {
 			llvm::SmallVector<IRQState, 32> freed;
-			for (IRQState s: state->get<IrqStateSet>()) {
+			for (const IRQState &s: state->get<IrqStateSet>()) {
 				if (s.isFreed()) {
 					freed.push_back(s);
 				}
@@ -539,7 +560,7 @@ void IRQChecker::reportDoubleRequestUniqueIrq(const IRQState &state, CheckerCont
 		llvm::raw_svector_ostream os(buf);
 		os << state.getIrqString() << " is already requested";
 		BugReport *reporter = new BugReport(*typeDoubleRequestUniqueIrq, os.str(), node);
-		state.markForBugReport(reporter);
+		state.markForBugReport(reporter, false);
 		context.emitReport(reporter);
 	}
 }
@@ -553,7 +574,7 @@ void IRQChecker::reportDoubleRequestSharedIrq(const IRQState &state, CheckerCont
 		llvm::raw_svector_ostream os(buf);
 		os << state.getIrqString() << " is already requested with the same dev id";
 		BugReport *reporter = new BugReport(*typeDoubleRequestSharedIrq, os.str(), node);
-		state.markForBugReport(reporter);
+		state.markForBugReport(reporter, false);
 		context.emitReport(reporter);
 	}
 }
@@ -567,7 +588,7 @@ void IRQChecker::reportDoubleFree(const IRQState &state, CheckerContext &context
 		llvm::raw_svector_ostream os(buf);
 		os << state.getIrqString() << " with " << state.getDevIdString() << " is already freed";
 		BugReport *reporter = new BugReport(*typeDoubleFree, os.str(), node);
-		state.markForBugReport(reporter);
+		state.markForBugReport(reporter, false);
 		context.emitReport(reporter);
 	}
 }
@@ -581,12 +602,12 @@ void IRQChecker::reportFreeRequestFailedIrq(const IRQState &state, CheckerContex
 		llvm::raw_svector_ostream os(buf);
 		os << state.getIrqString() << " is freed on request_irq failure path";
 		BugReport *reporter = new BugReport(*typeFreeRequestFailedIrq, os.str(), node);
-		state.markForBugReport(reporter);
+		state.markForBugReport(reporter, false);
 		context.emitReport(reporter);
 	}
 }
 
-void IRQChecker::reportIrqLeak(const IRQState &state, SmallVector<IRQState, 32> freed, CheckerContext &context) const {
+void IRQChecker::reportIrqLeak(const IRQState &state, SmallVector<IRQState, 32> & freed, CheckerContext &context) const {
 	if (ExplodedNode *node = context.generateSink()) {
 		if (!typeLeakIrq)
 			typeLeakIrq.reset(new BugType(this, "IRQ Leak", "IRQ Error"));
@@ -597,15 +618,72 @@ void IRQChecker::reportIrqLeak(const IRQState &state, SmallVector<IRQState, 32> 
 		BugReport *reporter = new BugReport(*typeLeakIrq, os.str(), node);
 		//reporter->disablePathPruning();
 		for (IRQState s : freed) {
-			s.markForBugReport(reporter);
+			s.markForBugReport(reporter, false);
 		}
-		state.markForBugReport(reporter);
+		state.markForBugReport(reporter, true);
 		context.emitReport(reporter);
 	}
 }
 
+PathDiagnosticPiece * IRQBugVisitor::VisitNode(const ExplodedNode *N, const ExplodedNode *PrevN, BugReporterContext &BRC, BugReport &BR) {
+	ProgramStateRef state = N->getState();
+	ProgramStateRef prevState = PrevN->getState();
+
+	IRQState *irqState = nullptr, *prevIrqState = nullptr;
+
+	for (IRQState i : state->get<IrqStateSet>()) {
+		if (i.isSameIrq(val) || i.isSameDevId(val)) {
+			irqState = &i;
+		}
+	}
+	for (IRQState i : prevState->get<IrqStateSet>()) {
+		if (i.isSameIrq(val) || i.isSameDevId(val)) {
+			prevIrqState = &i;
+		}
+	}
+
+	const Stmt *stmt = nullptr;
+	const char *msg = nullptr;
+
+	StackHintGeneratorForSymbol *StackHint = nullptr;
+	// Retrieve the associated statement.
+	ProgramPoint ProgLoc = N->getLocation();
+	if (Optional<StmtPoint> SP = ProgLoc.getAs<StmtPoint>()) {
+		stmt = SP->getStmt();
+	}
+	else if (Optional<CallExitEnd> Exit = ProgLoc.getAs<CallExitEnd>()) {
+		stmt = Exit->getCalleeContext()->getCallSite();
+	}
+	else if (Optional<BlockEdge> Edge = ProgLoc.getAs<BlockEdge>()) {
+		// If an assumption was made on a branch, it should be caught
+		// here by looking at the state transition.
+		stmt = Edge->getSrc()->getTerminator();
+	}
+
+	if (!stmt)
+		return nullptr;
+
+	// Find out if this is an interesting point and what is the kind.
+	if (isa<CallExpr>(stmt) && (irqState && irqState->isRequested()) && (!prevIrqState || !prevIrqState->isRequested())) {
+		msg = "IRQ is requested";
+		StackHint = new StackHintGeneratorForSymbol(val.getAsSymbol(), "Requested IRQ");
+	} else if (isa<CallExpr>(stmt) && (irqState && irqState->isFreed()) && (!prevIrqState || !prevIrqState->isFreed())) {
+		msg = "IRQ is freed";
+		StackHint = new StackHintGeneratorForSymbol(val.getAsSymbol(), "Returning; IRQ was released");
+	} else if (isa<CallExpr>(stmt) && (irqState && irqState->isEscaped()) && (!prevIrqState || !prevIrqState->isEscaped())) {
+		msg = "IRQ is escaped";
+		StackHint = new StackHintGeneratorForSymbol(val.getAsSymbol(), "Escaped IRQ");
+	}
+
+	if (!msg)
+		return nullptr;
+
+	// Generate the extra diagnostic.
+	PathDiagnosticLocation Pos(stmt, BRC.getSourceManager(), N->getLocationContext());
+	return new PathDiagnosticEventPiece(Pos, msg, true, StackHint);
+}
 
 // register this checker
 void registerIRQChecker(CheckerRegistry &registry) {
-	registry.addChecker<IRQChecker>("linux.IRQChecker", "Checks the consistency between request_irq and free_irq");
+	registry.addChecker<IRQChecker>("linux.irq", "Checks the consistency between request_irq and free_irq");
 }
