@@ -3,6 +3,7 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
 #include "clang/StaticAnalyzer/Core/CheckerRegistry.h"
+#include "MyBugReporter.h"
 
 using namespace clang;
 using namespace ento;
@@ -146,7 +147,7 @@ namespace {
 		ProgramStateRef checkPointerEscape(ProgramStateRef state, const InvalidatedSymbols &escaped, const CallEvent *call, PointerEscapeKind kind) const;
 		ProgramStateRef checkConstPointerEscape(ProgramStateRef state, const InvalidatedSymbols &escaped, const CallEvent *call, PointerEscapeKind kind) const;
 		void checkPreStmt(const BinaryOperator *binOp, CheckerContext &context) const;
-		void checkEndAnalysis(ExplodedGraph &graph, BugReporter &reporter, ExprEngine &eng) const;
+		void checkEndAnalysis(ExplodedGraph &graph, BugReporter &unused, ExprEngine &eng) const;
 
 	private:
 		mutable std::map<const FunctionDecl *, BugType *> bugTypes; // must be global to generate reports correctly
@@ -465,7 +466,9 @@ namespace {
 		}
 	}
 
-	void IRQChecker::checkEndAnalysis(ExplodedGraph &graph, BugReporter &reporter, ExprEngine &eng) const {
+	void IRQChecker::checkEndAnalysis(ExplodedGraph &graph, BugReporter &unused, ExprEngine &eng) const {
+		MyBugReporter reporter(eng.getAnalysisManager(), eng);
+
 		// summarize the results
 		std::map<const FunctionDecl *, const Stmt *> exitPoints;
 		std::map<const FunctionDecl *, std::set<StringRef>> descriptions;

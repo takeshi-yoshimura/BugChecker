@@ -17,10 +17,9 @@ add_definitions(${LLVM_DEFINITIONS})
 include_directories(${LLVM_INCLUDE_DIRS})
 link_directories(${LLVM_LIBRARY_DIRS})
 
-
 # Link against LLVM libraries
 if ( MSVC )
-  add_library(bugchecker MODULE BugChecker.cpp GetEntryExit.cpp IRQChecker.cpp)
+  add_library(bugchecker MODULE BugChecker.cpp GetEntryExit.cpp IRQChecker.cpp MyBugReporter.cpp)
   target_link_libraries(bugchecker clangAnalysis clangAST clangLex clangParse clangBasic clangStaticAnalyzerCore LLVMSupport)
 else ()
   add_llvm_loadable_module(bugchecker BugChecker.cpp GetEntryExit.cpp IRQChecker.cpp)
