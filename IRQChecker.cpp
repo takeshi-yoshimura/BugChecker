@@ -443,9 +443,11 @@ namespace {
 		}
 
 		// WrongFree should be reported as Leak.
-		// we couldn't find out irq so generate a sink to summarize afterwards. probably inconsistent arguments.
 		//state = state->set<IRQStateMap>(irq.generateNewID(), IRQState::getNewState(IRQState::WrongFree, irq, false));
 		//context.generateSink(state);
+
+		state = state->set<IRQStateMap>(irq.generateNewID(), IRQState::getNewState(IRQState::FreeAfterEscape, irq, false));
+		context.addTransition(state);
 	}
 
 	void IRQChecker::checkEndFunction(CheckerContext &context) const {
@@ -625,6 +627,7 @@ namespace {
 			if (reporter.getSourceManager().isInMainFile(i->getCodeDecl().getSourceRange().getBegin())) {
 				latestNodeInMain = &(*i);
 			}
+			const FunctionDecl *ancient = ancientCaller(latestNodeInMain->getLocationContext());
 			ExplodedNode::succ_iterator next = i->succ_begin(), e2 = i->succ_end();
 			for (; next != e2; ++next) {
 				ProgramStateRef nextState = (*next)->getState();
@@ -636,7 +639,6 @@ namespace {
 					const IRQState &nextIrqState = i->second;
 					const IRQState * irqState = state->get<IRQStateMap>(id);
 
-					const FunctionDecl *ancient = ancientCaller(latestNodeInMain->getLocationContext());
 					Optional<PostStmt> passed = latestNodeInMain->getLocation().getAs<PostStmt>();
 					if (passed && reporter.getSourceManager().isInMainFile(passed->getStmt()->getLocStart()))
 						execs[ancient].passedStmts.insert(passed->getStmt());
