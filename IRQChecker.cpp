@@ -18,23 +18,60 @@ namespace {
 			}
 		};
 
-		const ComparableSVal &irqVal, &devIdVal;
+		const SVal irqVal, devIdVal;
 
 		// always find the region that stores the value (e.g., return &sym even if typeof(sym) == int *)
 		const MemRegion * getRegionStoring(SymbolRef sym) const {
 			if (const SymbolRegionValue * symRegion = dyn_cast_or_null<SymbolRegionValue>(sym)) {
 				return symRegion->getRegion();
 			}
-			return nullptr; //constant, etc.
+			else if (const SymbolMetadata *symRegion = dyn_cast_or_null<SymbolMetadata>(sym)) {
+				return symRegion->getRegion();
+			}
+			else if (const SymbolExtent *symRegion = dyn_cast_or_null<SymbolExtent>(sym)) {
+				return symRegion->getRegion();
+			}
+			else if (const SymbolDerived *symRegion = dyn_cast_or_null<SymbolDerived>(sym)) {
+				return symRegion->getRegion();
+			}
+			return nullptr; // the root region is not a symbol, so we return a nullptr
+		}
+
+		bool isInRegionOf(const MemRegion * region, const SVal &val) const {
+			SymbolRef rootSym = val.getAsSymbol();
+			while (const MemRegion * mem = getRegionStoring(rootSym)) {
+				MemRegion * root = nullptr;
+				if (const SymbolRegionValue * symRegion = dyn_cast_or_null<SymbolRegionValue>(rootSym)) {
+					root = const_cast<MemRegion *>(symRegion->getRegion()->getBaseRegion());
+				}
+				else if (const SymbolMetadata *symRegion = dyn_cast_or_null<SymbolMetadata>(rootSym)) {
+					root = const_cast<MemRegion *>(symRegion->getRegion()->getBaseRegion());
+				}
+				else if (const SymbolExtent *symRegion = dyn_cast_or_null<SymbolExtent>(rootSym)) {
+					root = const_cast<MemRegion *>(symRegion->getRegion()->getBaseRegion());
+				}
+				else if (const SymbolDerived *symRegion = dyn_cast_or_null<SymbolDerived>(rootSym)) {
+					root = const_cast<MemRegion *>(symRegion->getRegion()->getBaseRegion());
+				}
+
+				if (const SymbolicRegion *rootRegion = dyn_cast_or_null<SymbolicRegion>(root)) {
+					rootSym =  rootRegion->getSymbol(); //a root region is usually a symbol
+				}
+				else {
+					rootSym = nullptr;
+				}
+				if (mem->isSubRegionOf(region))
+					return true;
+			}
+			return false;
 		}
 
 	public:
-		UniqueIRQ(const SVal &irqVal_, const SVal &devIdVal_)
-			: irqVal(static_cast<const ComparableSVal &>(irqVal_)), devIdVal(static_cast<const ComparableSVal &>(devIdVal_)) {}
+		UniqueIRQ(const SVal &irqVal_, const SVal &devIdVal_) : irqVal(irqVal_), devIdVal(devIdVal_) {}
 		UniqueIRQ(const UniqueIRQ &other) : irqVal(other.irqVal), devIdVal(other.devIdVal) {}
 
 		bool contains(const SymbolRef sym) const {
-			return irqVal.getAsSymbol() == sym || devIdVal.getAsSymbol() == sym;
+			return sym != nullptr && (irqVal.getAsSymbol() == sym || devIdVal.getAsSymbol() == sym);
 		}
 
 		bool isSameIrqValAs(const UniqueIRQ &irq) const {
@@ -46,6 +83,13 @@ namespace {
 			return ID++;
 		}
 
+		const SVal &getIrqVal() const {
+			return irqVal;
+		}
+		const SVal &getDevIdVal() const {
+			return devIdVal;
+		}
+
 		bool isSameRegionAs(const UniqueIRQ &other) const {
 			const MemRegion * othIrqRegion = getRegionStoring(other.irqVal.getAsSymbol());
 			const MemRegion * othDevIdRegion = getRegionStoring(other.devIdVal.getAsSymbol());
@@ -54,18 +98,33 @@ namespace {
 			return irqRegion == othIrqRegion && devIdRegion == othDevIdRegion;
 		}
 
+		bool overlap(const MemRegion *mem) const {
+			return isInRegionOf(mem, irqVal) || isInRegionOf(mem, devIdVal);
+		}
+
+		bool overlap(SymbolRef sym) const {
+			return isInRegionOf(getRegionStoring(sym), irqVal) || isInRegionOf(getRegionStoring(sym), devIdVal);
+		}
+
 		bool operator==(const UniqueIRQ &other) const {
 			return irqVal == other.irqVal && devIdVal == other.devIdVal;
 		}
 		bool operator<(const UniqueIRQ &other) const {
 			if (irqVal != other.irqVal) {
-				return irqVal < other.irqVal;
+				return static_cast<const ComparableSVal &>(irqVal) < static_cast<const ComparableSVal &>(other.irqVal);
 			}
-			return devIdVal < other.devIdVal;
+			return static_cast<const ComparableSVal &>(devIdVal) < static_cast<const ComparableSVal &>(other.devIdVal);
 		}
 		void Profile(llvm::FoldingSetNodeID &ID) const {
 			irqVal.Profile(ID);
 			devIdVal.Profile(ID);
+		}
+		void dump() const {
+			llvm::errs() << "irq: ";
+			irqVal.dump();
+			llvm::errs() << " | ";
+			devIdVal.dump();
+			llvm::errs() << "\n";
 		}
 	};
 
@@ -74,14 +133,15 @@ namespace {
 	class IRQState {
 	public:
 		enum Kind {
-			Requested, RequestFailed, Freed, Escaped, FreeAfterEscape, DoubleEscaped,
-			DoubleRequested, ZeroDevId, CannotShare, WrongFree, DoubleFree, Leak,
-			End, Corrupt
+			Requested, RequestFailed, Freed, Escaped, FreeAfterEscape, DoubleEscaped, //running states
+			DoubleRequested, ZeroDevId, CannotShare, FreeFailed, WrongFree, DoubleFree, Leak, // buggy states
+			End, EscapedEnd, Corrupt // non-buggy states
 		};
+		static const std::map<IRQState::Kind, const std::string> displayNameMap; // constant value. see the init code after this class
 
 	private:
 		const Kind k;
-		const UniqueIRQ &irq;
+		const UniqueIRQ irq;
 		const bool sharable;
 
 		IRQState(Kind k_, const UniqueIRQ &irq_, bool sharable_) : k(k_), irq(irq_), sharable(sharable_) {}
@@ -122,51 +182,79 @@ namespace {
 		}
 	};
 
-	class IRQBugVisitor : public BugReporterVisitorImpl < IRQBugVisitor > {
-	public:
-		~IRQBugVisitor() override {}
-
-		void Profile(llvm::FoldingSetNodeID &ID) const override {
-			static int X = 0;
-			ID.AddPointer(&X);
-		}
-
-		PathDiagnosticPiece *VisitNode(const ExplodedNode *N, const ExplodedNode *PrevN, BugReporterContext &BRC, BugReport &BR) override;
-
-		std::unique_ptr<PathDiagnosticPiece> getEndPath(BugReporterContext &BRC, const ExplodedNode *EndPathNode, BugReport &BR) override {
-			PathDiagnosticLocation L = PathDiagnosticLocation::createEndOfPath(EndPathNode, BRC.getSourceManager());
-			// Do not add the statement itself as a range in case of leak.
-			return llvm::make_unique<PathDiagnosticEventPiece>(L, BR.getDescription(), false);
-		}
+	const std::map<IRQState::Kind, const std::string> IRQState::displayNameMap = {
+		{ Requested, "Request irq" },
+		{ RequestFailed, "Failed to request irq" },
+		{ Freed, "Free irq" },
+		{ Escaped, "Escape irq" },
+		{ FreeAfterEscape, "Free irq" },
+		{ DoubleEscaped, "Escape irq" },
+		{ DoubleRequested, "Double requested" },
+		{ ZeroDevId, "Zero dev_id for shared IRQ" },
+		{ CannotShare, "Share unsharable IRQ" },
+		{ WrongFree, "Free non-existent IRQ" },
+		{ FreeFailed, "Free request-failed IRQ" },
+		{ DoubleFree, "Double Free IRQ" },
+		{ Leak, "Leak IRQ" },
+		{ End, "End of analysis (Passed)" },
+		{ EscapedEnd, "End of analysis (Escaped)" },
+		{ Corrupt, "Checker bug" },
 	};
 
-	class IRQChecker : public Checker < eval::Call, check::EndFunction, check::PointerEscape, check::PreStmt<BinaryOperator>, check::EndAnalysis > {
+	class IRQChecker : public Checker < eval::Call, check::PreCall, check::EndFunction, check::PreStmt<BinaryOperator>, check::EndAnalysis, check::PointerEscape, check::ConstPointerEscape > {
 	public:
 		bool evalCall(const CallExpr * call, CheckerContext &context) const;
+		void checkPreCall(const CallEvent &call, CheckerContext &context) const;
 		void checkEndFunction(CheckerContext &context) const;
 		ProgramStateRef checkPointerEscape(ProgramStateRef state, const InvalidatedSymbols &escaped, const CallEvent *call, PointerEscapeKind kind) const;
 		ProgramStateRef checkConstPointerEscape(ProgramStateRef state, const InvalidatedSymbols &escaped, const CallEvent *call, PointerEscapeKind kind) const;
 		void checkPreStmt(const BinaryOperator *binOp, CheckerContext &context) const;
-		void checkEndAnalysis(ExplodedGraph &graph, BugReporter &unused, ExprEngine &eng) const;
+		void checkEndAnalysis(ExplodedGraph &graph, BugReporter &reporter, ExprEngine &eng) const;
+
+		struct ExecutionSummary {
+			std::map<int, std::pair<ExplodedNode *, std::string>> bugNodes;
+
+			SourceLocation endLoc; // the end of Test* function
+			ExplodedNode * endNode = nullptr; // representative node for passed (no-bugs-found) end
+			bool escaped = false;
+			std::map<SourceLocation, ExplodedNode *> hintNodes; // hints for diagnosing
+			std::map<SourceLocation, std::string> hintMsgs; // hints for diagnosing
+			std::set<const Stmt *> passedStmts;
+		};
 
 	private:
-		mutable std::map<const FunctionDecl *, BugType *> bugTypes; // must be global to generate reports correctly
-
+		const FunctionDecl* ancientCaller(const LocationContext *current) const;
 		const ProgramStateRef trackState(ProgramStateRef state, const IRQState &irqState) const;
 		void RequestIRQ(const CallExpr * call, CheckerContext &context, bool isThreaded) const;
 		void FreeIRQ(const CallExpr * call, CheckerContext &context) const;
 		ProgramStateRef checkPointerEscapeAux(ProgramStateRef state, const InvalidatedSymbols &escaped) const;
+		std::set<int> handlePointerEscape(ProgramStateRef state, const SVal &val) const;
+		const Stmt * getStmtFromProgramPoint(const ProgramPoint &p) const;
 
-		// copied from lib/StaticChecker/Core/ExprEngine.cpp:2003
-		class CollectReachableSymbolsCallback : public SymbolVisitor {
-			InvalidatedSymbols Symbols;
+		class IRQBugVisitor : public BugReporterVisitorImpl<IRQBugVisitor> {
+		protected:
+			int id;
+			bool IsLeak;
+
 		public:
-			CollectReachableSymbolsCallback(ProgramStateRef State) {}
-			const InvalidatedSymbols &getSymbols() const { return Symbols; }
+			IRQBugVisitor(int id_, bool isLeak = false): id(id_), IsLeak(isLeak) {}
+			~IRQBugVisitor() override {}
 
-			bool VisitSymbol(SymbolRef Sym) override {
-				Symbols.insert(Sym);
-				return true;
+			void Profile(llvm::FoldingSetNodeID &ID) const override {
+				static int X = 0;
+				ID.AddPointer(&X);
+				ID.AddInteger(id);
+			}
+
+			PathDiagnosticPiece *VisitNode(const ExplodedNode *N, const ExplodedNode *PrevN, BugReporterContext &BRC, BugReport &BR) override;
+
+			std::unique_ptr<PathDiagnosticPiece> getEndPath(BugReporterContext &BRC, const ExplodedNode *EndPathNode, BugReport &BR) override {
+				if (!IsLeak)
+					return nullptr;
+
+				PathDiagnosticLocation L = PathDiagnosticLocation::createEndOfPath(EndPathNode, BRC.getSourceManager());
+				// Do not add the statement itself as a range in case of leak.
+				return llvm::make_unique<PathDiagnosticEventPiece>(L, BR.getDescription(), false);
 			}
 		};
 	};
@@ -177,6 +265,14 @@ REGISTER_MAP_WITH_PROGRAMSTATE(IRQStateMap, int, IRQState)
 REGISTER_MAP_WITH_PROGRAMSTATE(RevIRQID, UniqueIRQ, int)
 
 namespace {
+	const FunctionDecl * IRQChecker::ancientCaller(const LocationContext *current) const {
+		LocationContext *context = const_cast<LocationContext *>(current);
+		while (!context->inTopFrame()) {
+			context = const_cast<LocationContext *>(context->getParent());
+		}
+		return dyn_cast_or_null<FunctionDecl>(context->getDecl());
+	}
+
 	const ProgramStateRef IRQChecker::trackState(ProgramStateRef state, const IRQState &irqState) const {
 		const UniqueIRQ &irq = irqState.getTrackingIRQ();
 		// check if irq we try to track is known one
@@ -188,25 +284,7 @@ namespace {
 				return state;
 			}
 		}
-
-		// check if irq is escaped one
-		for (std::pair<int, IRQState> irqPair : state->get<IRQStateMap>()) {
-			if (irqPair.second.getTrackingIRQ().isSameRegionAs(irq)) {
-				//irq is an escaped irq, which was tracked but conjured somewhere.
-				state = state->set<RevIRQID>(irq, irqPair.first);
-
-				switch (irqPair.second.getKind()) {
-				case IRQState::Escaped:
-				case IRQState::DoubleEscaped:
-					state = state->set<IRQStateMap>(irqPair.first, irqState);
-					break;
-				default:
-					//debugging purpose
-					assert(false && "Unrecognized state at request_irq() or request_threaded_irq()");
-				}
-				return state;
-			}
-		}
+		// we do not handle re-request of escaped IRQs. they should be considered as different IRQs
 
 		// create new state space
 		int newID = irq.generateNewID();
@@ -216,26 +294,21 @@ namespace {
 	}
 
 	bool IRQChecker::evalCall(const CallExpr *call, CheckerContext &context) const {
-		LocationContext *lc = const_cast<LocationContext *>(context.getLocationContext());
-		while (!lc->inTopFrame()) {
-			lc = const_cast<LocationContext *>(lc->getParent());
-		}
-		const FunctionDecl *ancient = dyn_cast_or_null<FunctionDecl>(lc->getDecl());
-
+		const FunctionDecl *ancient = ancientCaller(context.getLocationContext());
 		if (ancient && ancient->getIdentifier()->getName().startswith("Test")) {
 			const FunctionDecl *funcDecl = context.getCalleeDecl(call);
-			if (funcDecl)
+			if (!funcDecl) {
 				return false; // function pointer?
-
-			if (funcDecl->getIdentifier()->getName() == "request_irq" && call->getNumArgs() != 5) {
+			}
+			if (funcDecl->getIdentifier()->getName() == "request_irq" && call->getNumArgs() == 5) {
 				RequestIRQ(call, context, false);
 				return true;
 			}
-			else if (funcDecl->getIdentifier()->getName() == "request_threaded_irq" && call->getNumArgs() != 6) {
+			else if (funcDecl->getIdentifier()->getName() == "request_threaded_irq" && call->getNumArgs() == 6) {
 				RequestIRQ(call, context, true);
 				return true;
 			}
-			else if (funcDecl->getIdentifier()->getName() == "free_irq" && call->getNumArgs() != 2) {
+			else if (funcDecl->getIdentifier()->getName() == "free_irq" && call->getNumArgs() == 2) {
 				FreeIRQ(call, context);
 				return true;
 			}
@@ -266,8 +339,7 @@ namespace {
 			const IRQState * prevIrqState = state->get<IRQStateMap>(*id);
 			if (prevIrqState->getKind() == IRQState::Requested) {
 				state = state->set<IRQStateMap>(*id, IRQState::getNewState(IRQState::DoubleRequested, *prevIrqState));
-				context.addTransition(state);
-				context.generateSink(); // summarize buggy actions at the end of analysis
+				context.generateSink(state); // summarize buggy actions at the end of analysis
 				return;
 			}
 		}
@@ -276,18 +348,17 @@ namespace {
 		bool isShared = flagNum.hasValue() && (flagNum->getValue().getLimitedValue() & IRQF_SHARED);
 		if (isShared && devIdVal.isZeroConstant()) {
 			state = state->set<IRQStateMap>(irq.generateNewID(), IRQState::getNewState(IRQState::ZeroDevId, irq, true));
-			context.addTransition(state);
-			context.generateSink(); // summarize buggy actions at the end of analysis
+			context.generateSink(state); // summarize buggy actions at the end of analysis
 			return;
 		}
 
 		// check sharability
 		if (isShared) {
-			for (std::pair<int, IRQState> irqPair : state->get<IRQStateMap>()) {
-				if (irqPair.second.getTrackingIRQ().isSameIrqValAs(irq) && !irqPair.second.isSharable()) {
-					state = state->set<IRQStateMap>(irqPair.first, IRQState::getNewState(IRQState::CannotShare, irqPair.second));
-					context.addTransition(state);
-					context.generateSink(); // summarize buggy actions at the end of analysis
+			IRQStateMapTy irqMap = state->get<IRQStateMap>();
+			for (auto i = irqMap.begin(), e = irqMap.end(); i != e; ++i) {
+				if (i->second.getTrackingIRQ().isSameIrqValAs(irq) && !i->second.isSharable()) {
+					state = state->set<IRQStateMap>(i->first, IRQState::getNewState(IRQState::CannotShare, i->second));
+					context.generateSink(state); // summarize buggy actions at the end of analysis
 					return;
 				}
 			}
@@ -309,8 +380,8 @@ namespace {
 		ProgramStateRef stateNotFail = constMgr.assume(state, successCond, true);
 		ProgramStateRef stateFail = constMgr.assume(state, failureCond, true);
 
-		trackState(stateNotFail, IRQState::getNewState(IRQState::Requested, irq, isShared));
-		trackState(stateFail, IRQState::getNewState(IRQState::RequestFailed, irq, isShared));
+		stateNotFail = trackState(stateNotFail, IRQState::getNewState(IRQState::Requested, irq, isShared));
+		stateFail = trackState(stateFail, IRQState::getNewState(IRQState::RequestFailed, irq, isShared));
 		context.addTransition(stateNotFail);
 		context.addTransition(stateFail);
 	}
@@ -338,42 +409,42 @@ namespace {
 			case IRQState::Freed:
 			case IRQState::FreeAfterEscape:
 				state = state->set<IRQStateMap>(*id, IRQState::getNewState(IRQState::DoubleFree, *irqState));
-				context.addTransition(state);
-				context.generateSink(); // summarize buggy actions at the end of analysis
+				context.generateSink(state); // summarize buggy actions at the end of analysis
 				break;
 			case IRQState::RequestFailed:
-				state = state->set<IRQStateMap>(*id, IRQState::getNewState(IRQState::WrongFree, *irqState));
-				context.addTransition(state);
-				context.generateSink(); // summarize buggy actions at the end of analysis
+				state = state->set<IRQStateMap>(*id, IRQState::getNewState(IRQState::FreeFailed, *irqState));
+				context.generateSink(state); // summarize buggy actions at the end of analysis
+				break;
 			default:
+				llvm::errs() << "Unrecognized state at free_irq(): " << irqState->getKind() << "\n";
 				assert(false && "Unrecognized state at free_irq()");
 			}
 			return;
 		}
 
 		// no id does not mean we didn't request irq. check escaped ones
-		for (std::pair<int, IRQState> irqPair : state->get<IRQStateMap>()) {
-			if (irqPair.second.getTrackingIRQ().isSameRegionAs(irq)) {
+		IRQStateMapTy irqMap = state->get<IRQStateMap>();
+		std::set<int> escapedIds;
+		for (auto i = irqMap.begin(), e = irqMap.end(); i != e; ++i) {
+			if (i->second.getTrackingIRQ().isSameRegionAs(irq)) {
 				// irq is an escaped irq, which was tracked but conjured somewhere.
-				state = state->set<RevIRQID>(irq, irqPair.first);
-
-				switch (irqPair.second.getKind()) {
-				case IRQState::Escaped:
-				case IRQState::DoubleEscaped:
-					state = state->set<IRQStateMap>(irqPair.first, IRQState::getNewState(IRQState::FreeAfterEscape, irqPair.second));
-					break;
-				default:
-					//debugging purpose
-					assert(false && "Unrecognized state at free_irq()");
-				}
-				return;
+				escapedIds.insert(i->first);
 			}
+		}
+		// move states
+		for (int id : escapedIds) {
+			const IRQState *irqState = state->get<IRQStateMap>(id);
+			state = state->set<RevIRQID>(irq, id);
+			state = state->set<IRQStateMap>(id, IRQState::getNewState(IRQState::FreeAfterEscape, *irqState));
+		}
+		if (escapedIds.size() > 0) {
+			context.addTransition(state);
+			return;
 		}
 
 		// we couldn't find out irq so generate a sink to summarize afterwards. probably inconsistent arguments.
 		state = state->set<IRQStateMap>(irq.generateNewID(), IRQState::getNewState(IRQState::WrongFree, irq, false));
-		context.addTransition(state);
-		context.generateSink();
+		context.generateSink(state);
 	}
 
 	void IRQChecker::checkEndFunction(CheckerContext &context) const {
@@ -386,268 +457,296 @@ namespace {
 			return;
 
 		ProgramStateRef state = context.getState();
-		for (std::pair<int, IRQState> irqPair : state->get<IRQStateMap>()) {
-			int id = irqPair.first;
-			IRQState &irqState = irqPair.second;
-			if (irqState.getKind() == IRQState::Requested)
+		IRQStateMapTy irqMap = state->get<IRQStateMap>();
+		for (auto i = irqMap.begin(), e = irqMap.end(); i != e; ++i) {
+			int id = i->first;
+			const IRQState &irqState = i->second;
+			switch (irqState.getKind()) {
+			case IRQState::Requested:
 				state = state->set<IRQStateMap>(id, IRQState::getNewState(IRQState::Leak, irqState));
-			else
+				break;
+			case IRQState::Escaped:
+			case IRQState::DoubleEscaped:
+			case IRQState::FreeAfterEscape:
+				state = state->set<IRQStateMap>(id, IRQState::getNewState(IRQState::EscapedEnd, irqState));
+				break;
+			default:
 				state = state->set<IRQStateMap>(id, IRQState::getNewState(IRQState::End, irqState));
-			context.addTransition(state);
+			}
 		}
-		context.generateSink();
+		context.generateSink(state);
 	}
 
 	ProgramStateRef IRQChecker::checkPointerEscape(ProgramStateRef state, const InvalidatedSymbols &escaped, const CallEvent *call, PointerEscapeKind kind) const {
 		return checkPointerEscapeAux(state, escaped);
 	}
-
 	ProgramStateRef IRQChecker::checkConstPointerEscape(ProgramStateRef state, const InvalidatedSymbols &escaped, const CallEvent *call, PointerEscapeKind kind) const {
 		return checkPointerEscapeAux(state, escaped);
 	}
 
 	ProgramStateRef IRQChecker::checkPointerEscapeAux(ProgramStateRef state, const InvalidatedSymbols &escaped) const {
-		for (InvalidatedSymbols::const_iterator I = escaped.begin(), E = escaped.end(); I != E; ++I) {
-			SymbolRef sym = *I;
-			for (std::pair<UniqueIRQ, int> irqPair : state->get<RevIRQID>()) {
-				UniqueIRQ irq = irqPair.first;
-				int id = irqPair.second;
-				if (!irq.contains(sym))
-					continue;
-				const IRQState *irqState = state->get<IRQStateMap>(id);
-				if (irqState->getKind() != IRQState::Escaped)
-					state = state->set<IRQStateMap>(id, IRQState::getNewState(IRQState::Escaped, *irqState));
-				else
-					state = state->set<IRQStateMap>(id, IRQState::getNewState(IRQState::DoubleEscaped, *irqState));
-			}
-		}
-		return state;
-	}
-
-	void IRQChecker::checkPreStmt(const BinaryOperator *binOp, CheckerContext &context) const {
-		if (!binOp->isAssignmentOp())
-			return;
-
-		ProgramStateRef state = context.getState();
-		SVal leftV = state->getSVal(binOp->getLHS()->IgnoreParenCasts(), context.getLocationContext());
-		SymbolRef lhs = leftV.getAsSymbol();
-		if (!lhs)
-			return; //can be reachable??
-
-		// check overwriting memory region where the analysis engine stores symbolic values for irqs
-		// we ignore memcpy functions, though...
-		CollectReachableSymbolsCallback scan = state->scanReachableSymbols<CollectReachableSymbolsCallback>(leftV);
-		const InvalidatedSymbols &escaped = scan.getSymbols();
-
-		std::set<int> escapedIds, doubleEscapedIds; // for avoiding escape <-> double escape transition inside this loop
-		for (InvalidatedSymbols::const_iterator i = escaped.begin(), e = escaped.end(); i != e; ++i) {
+		std::set<int> escapedIds;
+		for (auto i = escaped.begin(), e = escaped.end(); i != e; ++i) {
 			SymbolRef sym = *i;
-			for (std::pair<UniqueIRQ, int> irqPair : state->get<RevIRQID>()) {
-				UniqueIRQ irq = irqPair.first;
-				int id = irqPair.second;
-				if (!irq.contains(sym))
-					continue;
-				const IRQState *irqState = state->get<IRQStateMap>(id);
-				if (irqState->getKind() != IRQState::Escaped)
+			RevIRQIDTy idMap = state->get<RevIRQID>();
+			for (auto i2 = idMap.begin(), e2 = idMap.end(); i2 != e2; ++i2) {
+				UniqueIRQ irq = i2->first;
+				int id = i2->second;
+				const IRQState * irqState = state->get<IRQStateMap>(id);
+				if ((irqState->getKind() == IRQState::Requested ||
+					irqState->getKind() == IRQState::Escaped || irqState->getKind() == IRQState::DoubleEscaped) && (irq.overlap(sym) || irq.contains(sym))) {
 					escapedIds.insert(id);
-				else
-					doubleEscapedIds.insert(id);
+				}
 			}
 		}
 
 		// move states
 		for (int id : escapedIds) {
 			const IRQState *irqState = state->get<IRQStateMap>(id);
-			state = state->set<IRQStateMap>(id, IRQState::getNewState(IRQState::Escaped, *irqState));
+			if (irqState->getKind() != IRQState::Escaped)
+				state = state->set<IRQStateMap>(id, IRQState::getNewState(IRQState::Escaped, *irqState));
+			else
+				state = state->set<IRQStateMap>(id, IRQState::getNewState(IRQState::DoubleEscaped, *irqState));
 		}
-		for (int id : doubleEscapedIds) {
+		return state;
+	}
+
+	/**
+	 * we do not use pointer escape handlers provided by the framework
+	 * because it does not report the following cases:
+	 * struct A a; request_irq(a->irq,..); f(&a); // because a is not in symbolic region?
+	 * struct A *a, *b;request_irq(a->irq,..); a = b;
+	 */
+	std::set<int> IRQChecker::handlePointerEscape(ProgramStateRef state, const SVal &val) const {
+		std::set<int> escapedIds;
+
+		SymbolRef sym = val.getAsSymbol();
+		const MemRegion *mem = val.getAsRegion();
+		if (!mem && !sym)
+			return escapedIds;
+
+		RevIRQIDTy idMap = state->get<RevIRQID>();
+		for (auto i2 = idMap.begin(), e2 = idMap.end(); i2 != e2; ++i2) {
+			UniqueIRQ irq = i2->first;
+			int id = i2->second;
+			const IRQState * irqState = state->get<IRQStateMap>(id);
+			if ((irqState->getKind() == IRQState::Requested ||
+				irqState->getKind() == IRQState::Escaped || irqState->getKind() == IRQState::DoubleEscaped) && (irq.overlap(mem) || irq.contains(sym))) {
+				escapedIds.insert(id);
+			}
+		}
+		return escapedIds;
+	}
+
+	// handle pointer escape by external calls
+	void IRQChecker::checkPreCall(const CallEvent &call, CheckerContext &context) const {
+		if (!call.getCalleeIdentifier())
+			return;
+		StringRef funcName = call.getCalleeIdentifier()->getName();
+		if (funcName == "request_irq" || funcName == "request_threaded_irq" || funcName == "free_irq")
+			return;
+
+		const FunctionDecl *ancient = ancientCaller(context.getLocationContext());
+		if (!ancient || !ancient->getIdentifier()->getName().startswith("Test"))
+			return;
+
+		if (const FunctionDecl *calleeDecl = dyn_cast_or_null<FunctionDecl>(call.getDecl())) {
+			if (calleeDecl->hasBody())
+				return; // the analyzer traverses the function
+		}
+
+		ProgramStateRef state = context.getState();
+
+		std::set<int> escapedIds; // for avoiding escape <-> double escape transition inside this loop
+		for (unsigned int i = 0; i < call.getNumArgs(); i++) {
+			SVal arg = call.getArgSVal(i);
+			// check escaped memory region where the analysis engine stores symbolic values for irqs
+			std::set<int> newEscapedIds = handlePointerEscape(state, arg);
+			escapedIds.insert(newEscapedIds.begin(), newEscapedIds.end());
+		}
+
+		// move states
+		for (int id : escapedIds) {
 			const IRQState *irqState = state->get<IRQStateMap>(id);
-			state = state->set<IRQStateMap>(id, IRQState::getNewState(IRQState::DoubleEscaped, *irqState));
+			if (irqState->getKind() != IRQState::Escaped)
+				state = state->set<IRQStateMap>(id, IRQState::getNewState(IRQState::Escaped, *irqState));
+			else
+				state = state->set<IRQStateMap>(id, IRQState::getNewState(IRQState::DoubleEscaped, *irqState));
 		}
+		if (escapedIds.size() > 0)
+			context.addTransition(state);
 	}
 
-	void IRQChecker::checkEndAnalysis(ExplodedGraph &graph, BugReporter &unused, ExprEngine &eng) const {
-		MyBugReporter reporter(eng.getAnalysisManager(), eng);
+	// handle pointer escapes by assign operations
+	void IRQChecker::checkPreStmt(const BinaryOperator *binOp, CheckerContext &context) const {
+		if (!binOp->isAssignmentOp())
+			return;
 
-		// summarize the results
-		std::map<const FunctionDecl *, const Stmt *> exitPoints;
-		std::map<const FunctionDecl *, std::set<StringRef>> descriptions;
-		std::set<const FunctionDecl *> bugFound;
-		std::set<const FunctionDecl *> escaped;
-		ExplodedGraph::node_iterator i = graph.nodes_begin(), next = ++graph.nodes_begin(), e = graph.nodes_end();
-		for (; next != e; ++next, ++i) {
+		ProgramStateRef state = context.getState();
+		SVal leftV = state->getSVal(binOp->getLHS()->IgnoreParenCasts(), context.getLocationContext());
+
+		// check overwriting memory region where the analysis engine stores symbolic values for irqs
+		// we ignore memcpy functions, though...
+		std::set<int> escapedIds = handlePointerEscape(state, leftV);
+
+		// move states
+		for (int id : escapedIds) {
+			const IRQState *irqState = state->get<IRQStateMap>(id);
+			if (irqState->getKind() != IRQState::Escaped)
+				state = state->set<IRQStateMap>(id, IRQState::getNewState(IRQState::Escaped, *irqState));
+			else
+				state = state->set<IRQStateMap>(id, IRQState::getNewState(IRQState::DoubleEscaped, *irqState));
+		}
+		if (escapedIds.size() > 0)
+			context.addTransition(state);
+	}
+
+	const Stmt * IRQChecker::getStmtFromProgramPoint(const ProgramPoint &p) const {
+		if (Optional<StmtPoint> sp = p.getAs<StmtPoint>()) {
+			return sp->getStmt();
+		} else if (Optional<CallExitEnd> callExit = p.getAs<CallExitEnd>()) {
+			return callExit->getCalleeContext()->getCallSite();
+		} else if (Optional<BlockEdge> edge = p.getAs<BlockEdge>()) {
+			return edge->getSrc()->getTerminator();
+		}
+		return nullptr;
+	}
+
+	// summarize the results
+	void IRQChecker::checkEndAnalysis(ExplodedGraph &graph, BugReporter &reporter, ExprEngine &eng) const {
+		std::map<const FunctionDecl *, ExecutionSummary> execs;
+		ExplodedGraph::node_iterator i = graph.nodes_begin(), e = graph.nodes_end();
+		ExplodedNode *latestNodeInMain = &(*i);
+		for (; i != e; ++i) {
 			ProgramStateRef state = i->getState();
-			ProgramStateRef nextState = next->getState();
 
-			// find out exit points of analysis
-			for (std::pair<int, IRQState> irqPair : nextState->get<IRQStateMap>()) {
-				int id = irqPair.first;
-				IRQState &nextIrqState = irqPair.second;
-				const IRQState * irqState = state->get<IRQStateMap>(id);
+			// for ease of dianogsing (current framework does not provide results in header files)
+			if (reporter.getSourceManager().isInMainFile(i->getCodeDecl().getSourceRange().getBegin())) {
+				latestNodeInMain = &(*i);
+			}
+			ExplodedNode::succ_iterator next = i->succ_begin(), e2 = i->succ_end();
+			for (; next != e2; ++next) {
+				ProgramStateRef nextState = (*next)->getState();
 
-				if (irqState && irqState->getKind() == nextIrqState.getKind()) {
-					continue;
-				}
-				// state is changed at next node
-				ProgramPoint p = i->getLocation();
-				const FunctionDecl *funcDecl = dyn_cast_or_null<FunctionDecl>(p.getLocationContext()->getDecl());
-				if (!funcDecl)
-					continue;
+				// find out exit points of analysis
+				IRQStateMapTy irqMap = nextState->get<IRQStateMap>();
+				for (auto i = irqMap.begin(), e = irqMap.end(); i != e; ++i) {
+					int id = i->first;
+					const IRQState &nextIrqState = i->second;
+					const IRQState * irqState = state->get<IRQStateMap>(id);
 
-				switch (nextIrqState.getKind()) {
-				case IRQState::Requested:
-				case IRQState::RequestFailed:
-				case IRQState::Freed:
-				case IRQState::End:
-					// ignore normal transitions
-					continue;
-				case IRQState::Escaped:
-				case IRQState::FreeAfterEscape:
-				case IRQState::DoubleEscaped:
-					descriptions[funcDecl].insert(StringRef("Escaped"));
-					escaped.insert(funcDecl);
-					break;
-				case IRQState::DoubleRequested:
-					descriptions[funcDecl].insert(StringRef("Double Requested"));
-					bugFound.insert(funcDecl);
-					break;
-				case IRQState::ZeroDevId:
-					descriptions[funcDecl].insert(StringRef("Zero dev_id for shared IRQ"));
-					bugFound.insert(funcDecl);
-					break;
-				case IRQState::CannotShare:
-					descriptions[funcDecl].insert(StringRef("Share unsharable IRQ"));
-					bugFound.insert(funcDecl);
-					break;
-				case IRQState::WrongFree:
-					descriptions[funcDecl].insert(StringRef("Free non-existing or request-failed IRQ"));
-					bugFound.insert(funcDecl);
-					break;
-				case IRQState::DoubleFree:
-					descriptions[funcDecl].insert(StringRef("Double Free"));
-					bugFound.insert(funcDecl);
-					break;
-				case IRQState::Leak:
-					descriptions[funcDecl].insert(StringRef("Leak"));
-					bugFound.insert(funcDecl);
-					break;
-				case IRQState::Corrupt:
-					descriptions[funcDecl].insert(StringRef("Checker inconsistency"));
-					bugFound.insert(funcDecl);
-					break;
-				}
+					const FunctionDecl *ancient = ancientCaller(latestNodeInMain->getLocationContext());
+					Optional<PostStmt> passed = latestNodeInMain->getLocation().getAs<PostStmt>();
+					if (passed && reporter.getSourceManager().isInMainFile(passed->getStmt()->getLocStart()))
+						execs[ancient].passedStmts.insert(passed->getStmt());
 
-				// next node has escaped or buggy state here
-				const Stmt *stmt = nullptr;
-				if (Optional<StmtPoint> sp = p.getAs<StmtPoint>()) {
-					stmt = sp->getStmt();
+					if (irqState && irqState->getKind() == nextIrqState.getKind()) {
+						continue;
+					}
+
+					// state is changed at the next node
+
+					const Stmt *s = getStmtFromProgramPoint(latestNodeInMain->getLocation());
+					SourceLocation loc = (s) ? s->getLocStart() : SourceLocation();
+					IRQState::Kind k = nextIrqState.getKind();
+					if (IRQState::Requested <= k && k <= IRQState::DoubleEscaped) {
+						if (k == IRQState::RequestFailed) continue;
+						if (execs[ancient].hintNodes.count(loc) == 0) {
+							execs[ancient].hintNodes[loc] = latestNodeInMain;
+							execs[ancient].hintMsgs[loc] = IRQState::displayNameMap.at(k) + " "; // e.g., "request irq "
+						}
+						std::string &orig = execs[ancient].hintMsgs[loc];
+						std::string a = "#" + std::to_string(id) + " ";
+						if (orig.find(" " + a) == std::string::npos)
+							orig += a; // e.g., "request irq #1 #2
+					} else if (k == IRQState::End || k == IRQState::EscapedEnd) {
+						// we don't care whatever the report uses as the end node
+						execs[ancient].endLoc = loc;
+						execs[ancient].endNode = latestNodeInMain;
+					} else {
+						//Here, we look at a buggy node
+						execs[ancient].bugNodes[id] = std::make_pair(latestNodeInMain, IRQState::displayNameMap.at(k)); //+ "@irq #" + std::to_string(id));
+					}
+					if (k == IRQState::EscapedEnd)
+						execs[ancient].escaped = true;
 				}
-				else if (Optional<CallExitEnd> exit = p.getAs<CallExitEnd>()) {
-					stmt = exit->getCalleeContext()->getCallSite();
-				}
-				else if (Optional<BlockEdge> edge = p.getAs<BlockEdge>()) {
-					stmt = edge->getSrc()->getTerminator();
-				}
-				else {
-					llvm::errs() << "Unhandled Program kind: " << p.getKind() << "\n";
-					assert(false && "Unhandled ProgramPoint kind");
-				}
-				if (stmt && funcDecl)
-					exitPoints[funcDecl] = stmt;
 			}
 		}
-		for (std::pair<const FunctionDecl *, const Stmt *> exitPoint : exitPoints) {
-			StringRef funcName = exitPoint.first->getName();
-			llvm::StringRef group = bugFound.count(exitPoint.first) > 0 ? "IRQ bug" : escaped.count(exitPoint.first) > 0 ? "IRQ escaped" : "IRQ bug not found";
-			llvm::SmallString<64> bugType;
-			for (llvm::StringRef str : descriptions[exitPoint.first]) {
-				bugType.append(str);
-				bugType.append(", ");
-			}
-			bugType.erase(bugType.end() - 2, bugType.end());
-			llvm::Twine bugGroup = group + "@" + exitPoint.first->getName();
-			if (bugTypes.count(exitPoint.first) == 0)
-				bugTypes[exitPoint.first] = new BugType(this, bugType, bugGroup.str());
 
-			PathDiagnosticLocation pos(exitPoint.second, reporter.getSourceManager(), next->getLocationContext());
-			BugReport *report = new BugReport(*bugTypes[exitPoint.first], StringRef("The exit point of analysis"), &(*next), pos, exitPoint.first);
-			report->addVisitor(llvm::make_unique<IRQBugVisitor>());
-			reporter.emitReport(report);
+		// generate one report set (at most 3 report types) for each function in a .c file
+		for (std::pair<const FunctionDecl *, ExecutionSummary> exe : execs) {
+			ExecutionSummary &e = exe.second;
+
+			// report correct paths
+			if (e.endNode) {
+				// create hint messages about request, free, escape points
+				MyBugReporter myReporter(reporter);
+				for (std::pair<SourceLocation, ExplodedNode *> hint : e.hintNodes) {
+					const Stmt *s = getStmtFromProgramPoint(hint.second->getLocation());
+					if (!s)
+						continue;
+					PathDiagnosticLocation hintPos(s, reporter.getSourceManager(), hint.second->getLocationContext());
+					PathDiagnosticEventPiece *p = new PathDiagnosticEventPiece(hintPos, e.hintMsgs[hint.first], true);
+					myReporter.addPiece(p);
+				}
+				const std::string &desc = e.escaped ? IRQState::displayNameMap.at(IRQState::Escaped) : IRQState::displayNameMap.at(IRQState::End);
+				BugType bug(this, desc, e.escaped ? "IRQ:Escape" : "IRQ:NoBugs");
+				PathDiagnosticLocation end = PathDiagnosticLocation::createEndOfPath(e.endNode, reporter.getSourceManager());
+				BugReport * r = new BugReport(bug, desc, e.endNode, end, exe.first);
+				for (const Stmt *passed : exe.second.passedStmts) {
+					r->addRange(passed->getSourceRange());
+				}
+				myReporter.diagnoseSimple(r);
+				myReporter.flush();
+			}
+
+			// report buggy paths (all the reports are independent)
+			// use default BugReporter in this case
+			for (std::pair<int, std::pair<ExplodedNode *, std::string>> node : e.bugNodes) {
+				const std::string &desc = node.second.second;
+				const Stmt *s = getStmtFromProgramPoint(node.second.first->getLocation());
+				BugType * bug = new BugType(this, desc.substr(0, desc.find('@')), "IRQ:Bug");
+				PathDiagnosticLocation pos(s, reporter.getSourceManager(), node.second.first->getLocationContext());
+
+				BugReport *r = new BugReport(*bug, desc, node.second.first, pos, exe.first);
+				r->addVisitor(llvm::make_unique<IRQBugVisitor>(node.first));
+				reporter.emitReport(r);
+			}
 		}
 	}
 
-	PathDiagnosticPiece * IRQBugVisitor::VisitNode(const ExplodedNode *node, const ExplodedNode *prevNode, BugReporterContext &reporterContext, BugReport &reporter) {
+	// mostly copied from MallocChecker
+	// TODO: remove this
+	PathDiagnosticPiece * IRQChecker::IRQBugVisitor::VisitNode(const ExplodedNode *N, const ExplodedNode *PrevN, BugReporterContext &BRC, BugReport &BR) {
+		if (Optional<PostStmt> SP = N->getLocation().getAs<PostStmt>()) {
+			if (SP->getStmt() && BRC.getSourceManager().isInMainFile(SP->getStmt()->getLocStart()))
+				BR.addRange(SP->getStmt()->getSourceRange());
+		}
+		const Stmt *S = nullptr;
+		if (Optional<PostStmt> SP = PrevN->getLocation().getAs<PostStmt>()) {
+			S = SP->getStmt();
+			if (BRC.getSourceManager().isInMainFile(S->getLocStart()))
+				BR.addRange(S->getSourceRange());
+		}
+		if (!S)
+			return nullptr; // S is used for creating PathDiagnosticLocation
+
+		const IRQState *RS = N->getState()->get<IRQStateMap>(id);
+		const IRQState *RSPrev = PrevN->getState()->get<IRQStateMap>(id);
+		if (!RS || !RSPrev || RS->getKind() == RSPrev->getKind()) {
+			return nullptr;
+		}
+
+		IRQState::Kind k = RS->getKind();
+		if (IRQState::Requested <= k && k <= IRQState::DoubleEscaped) {
+			std::string Msg = IRQState::displayNameMap.at(k) + " #" + std::to_string(id); // e.g., "request irq #1
+			StackHintGeneratorForSymbol *StackHint = nullptr;
+			if (SymbolRef Sym = RS->getTrackingIRQ().getIrqVal().getAsSymbol())
+				StackHint = new StackHintGeneratorForSymbol(Sym, Msg);
+			PathDiagnosticLocation Pos(S, BRC.getSourceManager(), N->getLocationContext());
+			return new PathDiagnosticEventPiece(Pos, Msg, true, StackHint);
+		}
 		return nullptr;
-		/*ProgramStateRef state = node->getState();
-		ProgramStateRef prevState = prevNode->getState();
-		llvm::SmallVector<StringRef, 32> requested, freed, escaped, freeAfterEscape, bug;
-
-		if (!prevNode->isSink && node->isSink()) {
-
-		}
-
-		IRQState *irqState = nullptr, *prevIrqState = nullptr;
-		for (std::pair<UniqueIRQ, StringRef> irqPair : prevState->get<RevIRQID>()) {
-		UniqueIRQ irq = irqPair.first;
-		StringRef id = irqPair.second;
-		const IRQState * irqState = prevState->get<IRQStateMap>(id);
-
-		if (const IRQState * nextIrqState = state->get<IRQStateMap>(id)) {
-		}
-		}
-
-		std::multimap<enum Kind, ExplodedNode> irqEvents;
-		for (; i != e; prev = i, ++i) {
-		ProgramStateRef prevState = prev->getState();
-		ProgramStateRef state = i->getState();
-		for (std::pair<StringRef, const IRQState *> irqPair : state->get<IRQStateMap>) {
-		StringRef id = irqPair.first;
-		const IRQState *irqState = irqPair.second;
-		const IRQState *prevIrqState = prevState->get<IRQStateMap>(id);
-		if (!prevIrqState || prevIrqState->getKind() != irqState->getKind()) {
-		// a new state appeared here
-		irqEvents.insert(std::pair<enum Kind, ExplodedNode>(irqState->getKind(), *i));
-		}
-		}
-		}
-
-		const Stmt *stmt = nullptr;
-		const char *msg = nullptr;
-
-		StackHintGeneratorForSymbol *StackHint = nullptr;
-		// Retrieve the associated statement.
-		ProgramPoint ProgLoc = N->getLocation();
-		if (Optional<StmtPoint> SP = ProgLoc.getAs<StmtPoint>()) {
-		stmt = SP->getStmt();
-		} else if (Optional<CallExitEnd> Exit = ProgLoc.getAs<CallExitEnd>()) {
-		stmt = Exit->getCalleeContext()->getCallSite();
-		} else if (Optional<BlockEdge> Edge = ProgLoc.getAs<BlockEdge>()) {
-		// If an assumption was made on a branch, it should be caught
-		// here by looking at the state transition.
-		stmt = Edge->getSrc()->getTerminator();
-		}
-
-		if (!stmt)
-		return nullptr;
-
-		// Find out if this is an interesting point and what is the kind.
-		if (isa<CallExpr>(stmt) && (irqState && irqState->isRequested()) && (!prevIrqState || !prevIrqState->isRequested())) {
-		msg = "IRQ is requested";
-		StackHint = new StackHintGeneratorForSymbol(val.getAsSymbol(), "Requested IRQ");
-		} else if (isa<CallExpr>(stmt) && (irqState && irqState->isFreed()) && (!prevIrqState || !prevIrqState->isFreed())) {
-		msg = "IRQ is freed";
-		StackHint = new StackHintGeneratorForSymbol(val.getAsSymbol(), "Returning; IRQ was released");
-		} else if (isa<CallExpr>(stmt) && (irqState && irqState->isEscaped()) && (!prevIrqState || !prevIrqState->isEscaped())) {
-		msg = "IRQ is escaped";
-		StackHint = new StackHintGeneratorForSymbol(val.getAsSymbol(), "Escaped IRQ");
-		}
-
-		if (!msg)
-		return nullptr;
-
-		// Generate the extra diagnostic.
-		PathDiagnosticLocation Pos(stmt, BRC.getSourceManager(), N->getLocationContext());
-		return new PathDiagnosticEventPiece(Pos, msg, true, StackHint);*/
 	}
 } //end of anonymous namespace
 

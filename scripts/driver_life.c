@@ -355,7 +355,7 @@ static void TestPCIDriver(struct pci_dev *pdev, const struct pci_device_id *id) 
 	int loop = 0;
 	enum TEST_PCI_STATE state;
 reprobe:
-	if (wrapper_pci_driver_probe(pdev, id)) {
+	if (wrapper_pci_driver_probe(pdev, id) != 0) {
 		return;
 	}
 	state = PCI_STATE_PROBED;
@@ -370,6 +370,7 @@ normal_operation:
 		break;
 	case PCI_EVENT_REMOVE:
 		wrapper_pci_driver_remove(pdev);
+		state = PCI_STATE_REMOVED;
 		break;
 	default:
 		idle_pci_driver(pdev);
@@ -414,7 +415,7 @@ static void TestPlatformDriver(struct platform_device *pdev, pm_message_t msg, s
 	int loop = 0;
 	enum TEST_PLATFORM_STATE state;
 reprobe:
-	if (wrapper_platform_driver_probe(pdev)) {
+	if (wrapper_platform_driver_probe(pdev) != 0) {
 		return;
 	}
 	state = PLATFORM_STATE_PROBED;
@@ -478,7 +479,7 @@ static void TestI2CDriver(struct i2c_client *cl, const struct i2c_device_id * id
 	int loop = 0;
 	enum TEST_I2C_STATE state;
 reprobe:
-	if (wrapper_i2c_driver_probe(cl, id)) {
+	if (wrapper_i2c_driver_probe(cl, id) != 0) {
 		return;
 	}
 	state = I2C_STATE_PROBED;
