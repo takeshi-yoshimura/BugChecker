@@ -1,0 +1,30 @@
+Index: lib/StaticAnalyzer/Core/BasicValueFactory.cpp
+===================================================================
+--- lib/StaticAnalyzer/Core/BasicValueFactory.cpp	(revision 238804)
++++ lib/StaticAnalyzer/Core/BasicValueFactory.cpp	(working copy)
+@@ -154,9 +154,13 @@
+       return &getValue( V1 * V2 );
+ 
+     case BO_Div:
++      if (V2 == 0) // Avoid division by zero
++        return nullptr;
+       return &getValue( V1 / V2 );
+ 
+     case BO_Rem:
++      if (V2 == 0) // Avoid division by zero
++        return nullptr;
+       return &getValue( V1 % V2 );
+ 
+     case BO_Add:
+Index: test/Analysis/division-by-zero.c
+===================================================================
+--- test/Analysis/division-by-zero.c	(revision 0)
++++ test/Analysis/division-by-zero.c	(working copy)
+@@ -0,0 +1,7 @@
++// RUN: %clang_cc1 -analyze -analyzer-checker=unix.Malloc %s
++// Do not crash due to division by zero
++
++int f(unsigned int a) {
++  if (a <= 0) return 1 / a;
++  return a;
++}

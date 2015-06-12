@@ -1,0 +1,38 @@
+Index: test/Analysis/scan-build-isystem.c
+===================================================================
+--- test/Analysis/scan-build-isystem.c	(revision 0)
++++ test/Analysis/scan-build-isystem.c	(working copy)
+@@ -0,0 +1,10 @@
++// RUN: perl %S/../../tools/scan-build/scan-build --use-analyzer %clang -o %t %clang_cc1 -isystem%S -fsyntax-only %s 2>&1
++// RUN: perl %S/../../tools/scan-build/scan-build --use-analyzer %clang -o %t %clang_cc1 -isystem %S -fsyntax-only %s 2>&1
++// ccc-analyzer has to correctly look up and include -isystem directory to avoid static analysis failures in scan-build.
++
++#include <scan-build-isystem.h>
++
++void f() {
++  int * i = 0;
++  *i = 1; // CHECK: Dereference of null pointer
++}
+Index: test/Analysis/scan-build-isystem.h
+===================================================================
+--- test/Analysis/scan-build-isystem.h	(revision 0)
++++ test/Analysis/scan-build-isystem.h	(working copy)
+@@ -0,0 +1 @@
++// dummy file
+\ No newline at end of file
+Index: tools/scan-build/ccc-analyzer
+===================================================================
+--- tools/scan-build/ccc-analyzer	(revision 238804)
++++ tools/scan-build/ccc-analyzer	(working copy)
+@@ -576,10 +576,9 @@
+   }
+ 
+   # Compile mode flags.
+-  if ($Arg =~ /^-[D,I,U,isystem](.*)$/) {
++  if ($Arg =~ /^-[D,I,U](.*)$/ || $Arg =~ /^-isystem(.*)$/) {
+     my $Tmp = $Arg;
+     if ($1 eq '') {
+-      # FIXME: Check if we are going off the end.
+       ++$i;
+       $Tmp = $Arg . $ARGV[$i];
+     }
