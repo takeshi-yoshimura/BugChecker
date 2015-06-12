@@ -134,7 +134,7 @@ namespace {
 	public:
 		enum Kind {
 			Requested, RequestFailed, Freed, Escaped, FreeAfterEscape, DoubleEscaped, //running states
-			DoubleRequested, ZeroDevId, CannotShare, FreeFailed, WrongFree, DoubleFree, Leak, // buggy states
+			DoubleRequested, ZeroDevId, CannotShare, FreeFailed, WrongFree, DoubleFree, Leak, // buggy states (WrongFree is unused)
 			End, EscapedEnd, Corrupt // non-buggy states
 		};
 		static const std::map<IRQState::Kind, const std::string> displayNameMap; // constant value. see the init code after this class
@@ -192,7 +192,7 @@ namespace {
 		{ DoubleRequested, "Double requested" },
 		{ ZeroDevId, "Zero dev_id for shared IRQ" },
 		{ CannotShare, "Share unsharable IRQ" },
-		{ WrongFree, "Free non-existent IRQ" },
+		{ WrongFree, "Free non-existent IRQ" }, // not used
 		{ FreeFailed, "Free request-failed IRQ" },
 		{ DoubleFree, "Double Free IRQ" },
 		{ Leak, "Leak IRQ" },
@@ -442,9 +442,10 @@ namespace {
 			return;
 		}
 
+		// WrongFree should be reported as Leak.
 		// we couldn't find out irq so generate a sink to summarize afterwards. probably inconsistent arguments.
-		state = state->set<IRQStateMap>(irq.generateNewID(), IRQState::getNewState(IRQState::WrongFree, irq, false));
-		context.generateSink(state);
+		//state = state->set<IRQStateMap>(irq.generateNewID(), IRQState::getNewState(IRQState::WrongFree, irq, false));
+		//context.generateSink(state);
 	}
 
 	void IRQChecker::checkEndFunction(CheckerContext &context) const {
